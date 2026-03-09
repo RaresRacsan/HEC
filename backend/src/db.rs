@@ -70,7 +70,7 @@ pub async fn get_user_by_username(pool: &PgPool, username: &str) -> Result<Optio
         User,
         r#"
         SELECT id, username, password_hash, created_at
-        FROM users WHERE username = $1
+        FROM users WHERE username ILIKE $1
         "#,
         username
     )

@@ -6,6 +6,7 @@ import {
 } from '@livekit/components-react';
 import '@livekit/components-styles';
 import './App.css';
+import { API_BASE, WS_BASE } from './api';
 
 import Chat from './Chat';
 import Auth from './Auth';
@@ -18,9 +19,16 @@ import {
 } from './Modals';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
-interface User { id: number; username: string; }
+interface User { id: number; username: string; role?: string; }
 interface Server { id: number; name: string; }
 interface Channel { id: number; name: string; is_dm: boolean; channel_type?: string; server_id?: number; }
+
+export type ChatMessage = {
+  channel_id: number;
+  user_id: number;
+  username: string;
+  content: string;
+};
 
 // Resolve a DM channel's display name (extract the other user's ID, then look up)
 function dmDisplayName(ch: Channel, myId: number, memberCache: Map<number, string>): string {
@@ -34,6 +42,14 @@ function dmDisplayName(ch: Channel, myId: number, memberCache: Map<number, strin
     return memberCache.get(otherId) ?? `User ${otherId}`;
   }
   return ch.name;
+}
+
+// ─── Helpers ────────────────────────────────────────────────────────────────
+function stringToColor(s: string): string {
+  const palette = ['#5865F2', '#3ba55d', '#faa61a', '#eb459e', '#ed4245', '#9b59b6', '#1abc9c', '#e67e22'];
+  let hash = 0;
+  for (let i = 0; i < s.length; i++) hash = s.charCodeAt(i) + ((hash << 5) - hash);
+  return palette[Math.abs(hash) % palette.length];
 }
 
 function ServerIcon({ name, active, onClick }: { name: string; active: boolean; onClick: () => void }) {
@@ -56,9 +72,16 @@ type ModalType = 'createServer' | 'joinServer' | 'createChannel' | 'invite' | 's
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
 
-  // LiveKit
+  // Storage for global WebSocket stuff
+  const [globalWs, setGlobalWs] = useState<WebSocket | null>(null);
+  const [wsStatus, setWsStatus] = useState<'connecting' | 'open' | 'closed'>('connecting');
+  const [lastChatMessage, setLastChatMessage] = useState<ChatMessage | null>(null);
+  const [onlineUsers, setOnlineUsers] = useState<number[]>([]);
+  const [voiceParticipants, setVoiceParticipants] = useState<Record<string, string[]>>({});
+
+  // LiveKit — URL uses same host as the page so voice goes through Vite's proxy
   const [token, setToken] = useState('');
-  const [livekitUrl, setLivekitUrl] = useState('ws://127.0.0.1:7880');
+  const [livekitUrl, setLivekitUrl] = useState(WS_BASE);
 
   // Navigation
   const [view, setView] = useState<'dms' | 'server'>('dms');
@@ -102,7 +125,7 @@ export default function App() {
   const fetchServers = async () => {
     if (!user) return;
     try {
-      const res = await fetch(`http://127.0.0.1:3000/api/users/${user.id}/servers`);
+      const res = await fetch(`${API_BASE}/api/users/${user.id}/servers`);
       const data = await res.json();
       setServers(Array.isArray(data) ? data : []);
     } catch { }
@@ -115,8 +138,8 @@ export default function App() {
     (async () => {
       try {
         const [chRes, memRes] = await Promise.all([
-          fetch(`http://127.0.0.1:3000/api/servers/${activeServer.id}/channels`),
-          fetch(`http://127.0.0.1:3000/api/servers/${activeServer.id}/members`),
+          fetch(`${API_BASE}/api/servers/${activeServer.id}/channels`),
+          fetch(`${API_BASE}/api/servers/${activeServer.id}/members`),
         ]);
         const [chData, memData] = await Promise.all([chRes.json(), memRes.json()]);
         setChannels(Array.isArray(chData) ? chData : []);
@@ -132,6 +155,24 @@ export default function App() {
     })();
   }, [activeServer]);
 
+  // ── Poll voice participants ──────────────────────────────────────────────
+  useEffect(() => {
+    if (!activeServer || view !== 'server') return;
+    let timer: number;
+    const fetchParticipants = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/servers/${activeServer.id}/voice-participants`);
+        if (res.ok) {
+          const data = await res.json();
+          setVoiceParticipants(data);
+        }
+      } catch { }
+      timer = window.setTimeout(fetchParticipants, 5000);
+    };
+    fetchParticipants();
+    return () => clearTimeout(timer);
+  }, [activeServer, view]);
+
   // ── Fetch DMs ─────────────────────────────────────────────────────────
   useEffect(() => {
     if (view !== 'dms' || !user) return;
@@ -139,7 +180,7 @@ export default function App() {
     setActiveChannel(null);
     (async () => {
       try {
-        const res = await fetch(`http://127.0.0.1:3000/api/users/${user.id}/dms`);
+        const res = await fetch(`${API_BASE}/api/users/${user.id}/dms`);
         const data = await res.json();
         const dms: Channel[] = Array.isArray(data) ? data : [];
         setChannels(dms);
@@ -155,7 +196,7 @@ export default function App() {
         });
         ids.forEach(async id => {
           try {
-            const res = await fetch(`http://127.0.0.1:3000/api/users/${id}`);
+            const res = await fetch(`${API_BASE}/api/users/${id}`);
             if (res.ok) {
               const u: { id: number; username: string } = await res.json();
               setUserCache(prev => {
@@ -170,17 +211,46 @@ export default function App() {
     })();
   }, [view, user]);
 
+  // ── Global WebSocket ───────────────────────────────────────────────────
+  useEffect(() => {
+    if (!user) return;
+    const ws = new WebSocket(`${WS_BASE}/api/ws?user_id=${user.id}`);
+    ws.onopen = () => setWsStatus('open');
+    ws.onclose = () => setWsStatus('closed');
+    ws.onerror = (err) => { console.error('WS Error', err); setWsStatus('closed'); };
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'presence') {
+          setOnlineUsers(data.online_users || []);
+        } else if (data.channel_id) {
+          setLastChatMessage(data as ChatMessage);
+        }
+      } catch (e) { /* ignore */ }
+    };
+    setGlobalWs(ws);
+    return () => {
+      ws.close();
+      setGlobalWs(null);
+    };
+  }, [user]);
+
   // ── Join voice ────────────────────────────────────────────────────────
   const joinVoice = async (ch: Channel) => {
     if (!user) return;
     try {
-      const res = await fetch('http://127.0.0.1:3000/api/livekit/token', {
+      const res = await fetch(`${API_BASE}/api/livekit/token`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ room_name: ch.name, participant_identity: user.username, participant_name: user.username }),
       });
+      if (!res.ok) { console.error('Token fetch failed:', await res.text()); return; }
       const data = await res.json();
-      setToken(data.token);
-      if (data.livekit_url) setLivekitUrl(data.livekit_url);
+      if (data.token && data.livekit_url?.startsWith('ws')) {
+        setLivekitUrl(data.livekit_url);
+        setToken(data.token);
+      } else {
+        console.error('Invalid token response', data);
+      }
     } catch (e) { console.error(e); }
   };
 
@@ -252,7 +322,21 @@ export default function App() {
             {voiceChannels.length > 0 && (
               <ChannelSection label="Voice Channels">
                 {voiceChannels.map(ch => (
-                  <ChannelItem key={ch.id} ch={ch} active={activeChannel?.id === ch.id} onClick={() => handleSelectChannel(ch)} isVoice />
+                  <div key={ch.id}>
+                    <ChannelItem ch={ch} active={activeChannel?.id === ch.id} onClick={() => handleSelectChannel(ch)} isVoice />
+                    {voiceParticipants[ch.name] && voiceParticipants[ch.name].length > 0 && (
+                      <div style={{ paddingLeft: 40, paddingBottom: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        {voiceParticipants[ch.name].map(p => (
+                          <div key={p} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <div style={{ width: 24, height: 24, borderRadius: '50%', backgroundColor: stringToColor(p), display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 700, fontSize: 10 }}>
+                              {p.charAt(0).toUpperCase()}
+                            </div>
+                            <span style={{ color: '#8e9297', fontSize: 13, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 ))}
               </ChannelSection>
             )}
@@ -269,6 +353,7 @@ export default function App() {
           <>
             {channels.map(ch => {
               const displayName = dmDisplayName(ch, user.id, userCache);
+              const partnerId = ch.name.split('-').map(Number).find(n => n !== user.id && !isNaN(n));
               return (
                 <ChannelItem
                   key={ch.id}
@@ -276,6 +361,8 @@ export default function App() {
                   active={activeChannel?.id === ch.id}
                   onClick={() => handleSelectChannel(ch)}
                   isDm
+                  showOnline={true}
+                  isOnline={partnerId ? onlineUsers.includes(partnerId) : false}
                 />
               );
             })}
@@ -353,10 +440,30 @@ export default function App() {
               <span style={{ color: 'white', fontWeight: 700 }}>{channelDisplayName}</span>
             </div>
             {activeServer && (
-              <button
-                onClick={() => setModal('invite')}
-                style={{ background: '#5865F2', color: 'white', padding: '6px 16px', borderRadius: 4, cursor: 'pointer', fontWeight: 600, fontSize: 13 }}
-              >👥 Invite People</button>
+              <div style={{ display: 'flex', gap: 8 }}>
+                {serverMembers.find(m => m.id === user?.id)?.role === 'owner' && (
+                  <button
+                    onClick={async () => {
+                      if (confirm(`Are you sure you want to delete ${activeServer.name}? This action cannot be undone.`)) {
+                        const res = await fetch(`${API_BASE}/api/servers/${activeServer.id}?user_id=${user?.id}`, { method: 'DELETE' });
+                        if (res.ok) {
+                          window.location.reload();
+                        } else {
+                          const err = await res.text();
+                          alert('Failed to delete server: ' + err);
+                        }
+                      }
+                    }}
+                    style={{ background: '#ed4245', color: 'white', padding: '6px 16px', borderRadius: 4, cursor: 'pointer', fontWeight: 600, fontSize: 13 }}
+                  >
+                    🗑️ Delete Server
+                  </button>
+                )}
+                <button
+                  onClick={() => setModal('invite')}
+                  style={{ background: '#5865F2', color: 'white', padding: '6px 16px', borderRadius: 4, cursor: 'pointer', fontWeight: 600, fontSize: 13 }}
+                >👥 Invite People</button>
+              </div>
             )}
           </div>
         )}
@@ -383,7 +490,7 @@ export default function App() {
                 </button>
               </div>
             </div>
-            <MemberList members={serverMembers} currentUserId={user.id} />
+            <MemberList members={serverMembers} currentUserId={user.id} onlineUsers={onlineUsers} />
           </div>
         )}
 
@@ -393,12 +500,28 @@ export default function App() {
             username={user.username}
             channelId={activeChannel!.id}
             channelName={channelDisplayName}
+            ws={globalWs}
+            wsStatus={wsStatus}
+            incomingMsg={lastChatMessage}
           />
         )}
 
-        {isVoice && token && (
-          <LiveKitRoom video audio token={token} serverUrl={livekitUrl} data-lk-theme="default" style={{ flex: 1 }}>
-            <VideoConference /><RoomAudioRenderer />
+        {isVoice && token && livekitUrl.startsWith('ws') && (
+          <LiveKitRoom
+            video audio
+            token={token}
+            serverUrl={livekitUrl}
+            data-lk-theme="default"
+            style={{
+              flex: 1,
+              minHeight: 0,          // allow flex child to shrink
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',    // prevent controls from escaping viewport
+            }}
+          >
+            <VideoConference />
+            <RoomAudioRenderer />
           </LiveKitRoom>
         )}
         {isVoice && !token && (
@@ -429,14 +552,21 @@ export default function App() {
         }} />
       )}
       {modal === 'invite' && activeServer && (
-        <InviteModal serverId={activeServer.id} userId={user.id} serverName={activeServer.name} onClose={() => setModal(null)} />
+        <InviteModal serverId={activeServer.id} serverName={activeServer.name} onClose={() => setModal(null)} />
       )}
       {modal === 'startDm' && (
         <StartDmModal
           userId={user.id}
           onClose={() => setModal(null)}
-          onStarted={(ch) => {
+          onStarted={(ch, partnerUsername) => {
             setChannels(prev => prev.some(c => c.id === ch.id) ? prev : [...prev, ch]);
+            // Cache the partner's username right away so the DM name shows immediately
+            const parts = ch.name.split('-');
+            if (parts.length === 3) {
+              const a = parseInt(parts[1], 10), b = parseInt(parts[2], 10);
+              const partnerId = a === user.id ? b : a;
+              setUserCache(prev => { const m = new Map(prev); m.set(partnerId, partnerUsername); return m; });
+            }
             setActiveChannel(ch);
           }}
         />
@@ -483,12 +613,12 @@ function ChannelSection({ label, children }: { label: string; children: React.Re
   );
 }
 
-function ChannelItem({ ch, active, onClick, isVoice, isDm }: {
-  ch: Channel; active: boolean; onClick: () => void; isVoice?: boolean; isDm?: boolean;
+function ChannelItem({ ch, active, onClick, isVoice, isDm, showOnline, isOnline }: {
+  ch: Channel; active: boolean; onClick: () => void; isVoice?: boolean; isDm?: boolean; showOnline?: boolean; isOnline?: boolean;
 }) {
   return (
     <div onClick={onClick} style={{
-      padding: '6px 16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8,
+      padding: '4px 16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8,
       borderRadius: 4, margin: '1px 8px',
       backgroundColor: active ? '#393c43' : 'transparent',
       color: active ? 'white' : '#8e9297',
@@ -497,13 +627,21 @@ function ChannelItem({ ch, active, onClick, isVoice, isDm }: {
       onMouseEnter={e => { if (!active) { (e.currentTarget as HTMLElement).style.backgroundColor = '#32353b'; (e.currentTarget as HTMLElement).style.color = '#dcddde'; } }}
       onMouseLeave={e => { if (!active) { (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent'; (e.currentTarget as HTMLElement).style.color = '#8e9297'; } }}
     >
-      <span style={{ fontSize: 16, flexShrink: 0 }}>{isDm ? '👤' : isVoice ? '🔊' : '#'}</span>
+      <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+        <span style={{ fontSize: 16, flexShrink: 0 }}>{isDm ? '👤' : isVoice ? '🔊' : '#'}</span>
+        {showOnline && isOnline && (
+          <div style={{
+            position: 'absolute', bottom: -2, right: -4, width: 10, height: 10,
+            backgroundColor: '#3ba55d', border: '2px solid #2f3136', borderRadius: '50%',
+          }} />
+        )}
+      </div>
       <span style={{ fontSize: 15, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ch.name}</span>
     </div>
   );
 }
 
-function MemberList({ members, currentUserId }: { members: User[]; currentUserId: number }) {
+function MemberList({ members, currentUserId, onlineUsers }: { members: User[]; currentUserId: number; onlineUsers: number[] }) {
   // Colour palette for avatars
   const avatarColor = (name: string) => {
     const palette = ['#5865F2', '#3ba55d', '#faa61a', '#eb459e', '#ed4245', '#9b59b6'];
@@ -527,11 +665,12 @@ function MemberList({ members, currentUserId }: { members: User[]; currentUserId
               {m.username.charAt(0).toUpperCase()}
             </div>
             {/* Status dot */}
-            <div style={{
-              position: 'absolute', bottom: -1, right: -1, width: 12, height: 12, borderRadius: '50%',
-              backgroundColor: '#3ba55d',
-              border: '2px solid #2f3136',
-            }} />
+            {onlineUsers.includes(m.id) && (
+              <div style={{
+                position: 'absolute', bottom: -1, right: -1, width: 12, height: 12, borderRadius: '50%',
+                backgroundColor: '#3ba55d', border: '2px solid #2f3136',
+              }} />
+            )}
           </div>
           <div>
             <div style={{ color: m.id === currentUserId ? '#5865F2' : '#dcddde', fontSize: 14, fontWeight: 500 }}>

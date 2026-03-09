@@ -73,8 +73,8 @@ pub async fn login_handler(
     
     let raw_pass = payload.password.unwrap_or_else(|| "".into());
     let is_valid = match &user.password_hash {
-        Some(hash) => bcrypt::verify(raw_pass, hash).unwrap_or(false),
-        None => true, // Fallback for old mock users
+        Some(hash) if !hash.is_empty() => bcrypt::verify(raw_pass, hash).unwrap_or(false),
+        _ => true, // Fallback for old mock users (NULL or empty string hashes)
     };
 
     if !is_valid {
@@ -144,14 +144,21 @@ pub async fn get_dms_handler(
     Ok(Json(channels))
 }
 
+#[derive(serde::Serialize)]
+pub struct ServerMemberResponse {
+    pub id: i32,
+    pub username: String,
+    pub role: Option<String>,
+}
+
 pub async fn get_server_members_handler(
     Path(server_id): Path<i32>,
     State(state): State<Arc<WsState>>,
-) -> Result<Json<Vec<db::User>>, String> {
+) -> Result<Json<Vec<ServerMemberResponse>>, String> {
     let members = sqlx::query_as!(
-        db::User,
+        ServerMemberResponse,
         r#"
-        SELECT u.id, u.username, u.password_hash, u.created_at as "created_at!"
+        SELECT u.id, u.username, sm.role
         FROM users u
         JOIN server_members sm ON u.id = sm.user_id
         WHERE sm.server_id = $1
@@ -194,6 +201,16 @@ pub async fn create_server_handler(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+    // Generate a unique, permanent invite code for this server based on its ID
+    let code = format!("{:08X}", (server.id as u64 * 0x9E3779B97F4A7C15u64) & 0xFFFF_FFFF);
+    sqlx::query!(
+        "INSERT INTO invite_codes (code, server_id, created_by) VALUES ($1, $2, $3) ON CONFLICT (code) DO NOTHING",
+        code, server.id, payload.user_id
+    )
+    .execute(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
     Ok(Json(server))
 }
 
@@ -225,6 +242,49 @@ pub async fn create_channel_handler(
 #[derive(Deserialize)]
 pub struct CreateInviteRequest {
     pub user_id: i32,
+}
+
+pub async fn get_server_invite_handler(
+    Path(server_id): Path<i32>,
+    State(state): State<Arc<WsState>>,
+) -> Result<Json<InviteResponse>, (StatusCode, String)> {
+    let existing = sqlx::query!(
+        "SELECT code FROM invite_codes WHERE server_id = $1 ORDER BY id ASC LIMIT 1",
+        server_id
+    )
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // If no invite exists yet (legacy server), generate one now
+    let code = if let Some(row) = existing {
+        row.code
+    } else {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let new_code = format!("{:08X}", (ts ^ (server_id as u128 * 0xDEAD_BEEF)) & 0xFFFF_FFFF);
+        // Find a valid creator (any member of the server)
+        let creator = sqlx::query!(
+            "SELECT user_id FROM server_members WHERE server_id = $1 LIMIT 1",
+            server_id
+        )
+        .fetch_one(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        sqlx::query!(
+            "INSERT INTO invite_codes (code, server_id, created_by) VALUES ($1, $2, $3) ON CONFLICT (code) DO NOTHING",
+            new_code, server_id, creator.user_id
+        )
+        .execute(&state.db)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        new_code
+    };
+
+    Ok(Json(InviteResponse {
+        invite_url: format!("http://localhost:1420/invite/{}", code),
+        code,
+    }))
 }
 
 #[derive(serde::Serialize)]
@@ -359,6 +419,44 @@ pub async fn start_dm_handler(
     Ok(Json(channel))
 }
 
+pub async fn get_voice_participants_handler(
+    Path(server_id): Path<i32>,
+    State(ws_state): State<Arc<WsState>>,
+    State(livekit): State<LiveKitState>,
+) -> Result<Json<std::collections::HashMap<String, Vec<String>>>, (StatusCode, String)> {
+    let channels = sqlx::query!(
+        "SELECT name FROM channels WHERE server_id = $1 AND channel_type = 'voice'",
+        server_id
+    )
+    .fetch_all(&ws_state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // The livekit API url must be HTTP, but our env var is WS.
+    let http_url = livekit.livekit_url.replace("ws://", "http://").replace("wss://", "https://");
+
+    // RoomClient needs an async init or sync init depending on version, but usually it's `with_api_key`
+    let room_service = livekit_api::services::room::RoomClient::with_api_key(
+        &http_url,
+        &livekit.livekit_api_key,
+        &livekit.livekit_api_secret,
+    );
+
+    let mut result = std::collections::HashMap::new();
+
+    for ch in channels {
+        // It's ok if this fails because the room might not exist if it's empty
+        if let Ok(participants) = room_service.list_participants(&ch.name).await {
+            let names: Vec<String> = participants.into_iter().map(|p| p.identity).collect();
+            if !names.is_empty() {
+                result.insert(ch.name, names);
+            }
+        }
+    }
+
+    Ok(Json(result))
+}
+
 pub async fn search_users_handler(
     Path(query): Path<String>,
     State(state): State<Arc<WsState>>,
@@ -373,6 +471,38 @@ pub async fn search_users_handler(
     .map_err(|e| e.to_string())?;
 
     Ok(Json(users))
+}
+
+pub async fn delete_server_handler(
+    Path(server_id): Path<i32>,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+    State(ws_state): State<Arc<WsState>>,
+) -> Result<impl axum::response::IntoResponse, (StatusCode, String)> {
+    let user_id = params.get("user_id").and_then(|id| id.parse::<i32>().ok()).unwrap_or(0);
+    if user_id == 0 {
+        return Err((StatusCode::UNAUTHORIZED, "User ID required".to_string()));
+    }
+
+    let member = sqlx::query!(
+        "SELECT role FROM server_members WHERE server_id = $1 AND user_id = $2",
+        server_id, user_id
+    )
+    .fetch_optional(&ws_state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if let Some(m) = member {
+        if m.role.as_deref() == Some("owner") {
+            sqlx::query!("DELETE FROM servers WHERE id = $1", server_id)
+                .execute(&ws_state.db)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            
+            return Ok(StatusCode::NO_CONTENT);
+        }
+    }
+
+    Err((StatusCode::FORBIDDEN, "Only the server owner can delete it".to_string()))
 }
 
 pub async fn get_user_by_id_handler(
@@ -434,7 +564,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             livekit_api_secret: env::var("LIVEKIT_API_SECRET").unwrap_or_else(|_| "secret".into()),
             livekit_url: env::var("LIVEKIT_URL").unwrap_or_else(|_| "ws://127.0.0.1:7880".into()),
         },
-        ws: Arc::new(WsState { db: pool, tx }),
+        ws: Arc::new(WsState {
+            db: pool,
+            tx,
+            online_users: Arc::new(std::sync::RwLock::new(std::collections::HashSet::new())),
+        }),
     };
 
     let cors = CorsLayer::permissive();
@@ -448,8 +582,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/users/{user_id}/servers", get(get_servers_handler))
         .route("/api/users/{user_id}/dms", get(get_dms_handler))
         .route("/api/servers/{server_id}/channels", get(get_server_channels_handler).post(create_channel_handler))
+        .route("/api/servers/{server_id}", axum::routing::delete(delete_server_handler))
+        .route("/api/servers/{server_id}/voice-participants", get(get_voice_participants_handler))
         .route("/api/servers/{server_id}/members", get(get_server_members_handler))
         .route("/api/servers/{server_id}/invites", post(create_invite_handler))
+        .route("/api/servers/{server_id}/invite", get(get_server_invite_handler))
         // Invites
         .route("/api/invites/{code}/join", post(join_invite_handler))
         // DMs
@@ -464,9 +601,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_state(state);
 
     let port: u16 = env::var("PORT").unwrap_or_else(|_| "3000".into()).parse().unwrap();
-    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let addr = SocketAddr::from(([0, 0, 0, 0], port));
     
-    println!("Server running on http://{}", addr);
+    println!("Server running on http://0.0.0.0:{} (accessible on your LAN)", port);
 
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();

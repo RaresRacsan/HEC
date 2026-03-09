@@ -7,7 +7,8 @@ use axum::{
 };
 use futures::{sink::SinkExt, stream::StreamExt};
 use sqlx::PgPool;
-use std::sync::Arc;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, RwLock};
 use tokio::sync::broadcast;
 use crate::db;
 use serde::{Deserialize, Serialize};
@@ -25,18 +26,28 @@ pub struct ChatMessage {
 pub struct WsState {
     pub db: PgPool,
     pub tx: broadcast::Sender<String>,
+    pub online_users: Arc<RwLock<HashSet<i32>>>,
 }
 
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
+    axum::extract::Query(params): axum::extract::Query<HashMap<String, String>>,
     State(state): State<Arc<WsState>>,
 ) -> Response {
-    ws.on_upgrade(|socket| handle_socket(socket, state))
+    let user_id = params.get("user_id").and_then(|id| id.parse::<i32>().ok()).unwrap_or(0);
+    ws.on_upgrade(move |socket| handle_socket(socket, state, user_id))
 }
 
-async fn handle_socket(socket: WebSocket, state: Arc<WsState>) {
+async fn handle_socket(socket: WebSocket, state: Arc<WsState>, user_id: i32) {
     let (mut sender, mut receiver) = socket.split();
     let mut rx = state.tx.subscribe();
+
+    if user_id > 0 {
+        if let Ok(mut users) = state.online_users.write() {
+            users.insert(user_id);
+        }
+        broadcast_presence(&state);
+    }
 
     // Task to forward broadcasted messages to this specific WebSocket client
     let mut send_task = tokio::spawn(async move {
@@ -66,4 +77,22 @@ async fn handle_socket(socket: WebSocket, state: Arc<WsState>) {
         _ = (&mut send_task) => recv_task.abort(),
         _ = (&mut recv_task) => send_task.abort(),
     };
+
+    if user_id > 0 {
+        if let Ok(mut users) = state.online_users.write() {
+            users.remove(&user_id);
+        }
+        broadcast_presence(&state);
+    }
+}
+
+fn broadcast_presence(state: &Arc<WsState>) {
+    if let Ok(users) = state.online_users.read() {
+        let online_users: Vec<i32> = users.iter().cloned().collect();
+        let msg = serde_json::json!({
+            "type": "presence",
+            "online_users": online_users
+        });
+        let _ = state.tx.send(msg.to_string());
+    }
 }

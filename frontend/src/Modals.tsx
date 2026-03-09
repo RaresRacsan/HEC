@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
+import { API_BASE } from './api';
 
-const API = 'http://127.0.0.1:3000';
+const API = API_BASE;
 
 // ─── Shared modal wrapper ──────────────────────────────────────────────────
 function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
@@ -103,6 +104,7 @@ export function CreateChannelModal({ serverId, onClose, onCreated }: {
     const handle = async (e: React.FormEvent) => {
         e.preventDefault();
         setErr('');
+        if (!name.trim()) { setErr('Channel name cannot be empty'); return; }
         try {
             const res = await fetch(`${API}/api/servers/${serverId}/channels`, {
                 method: 'POST',
@@ -147,25 +149,20 @@ export function CreateChannelModal({ serverId, onClose, onCreated }: {
 }
 
 // ─── 3. Invite People Modal ────────────────────────────────────────────────
-export function InviteModal({ serverId, userId, serverName, onClose }: {
-    serverId: number; userId: number; serverName: string; onClose: () => void;
+export function InviteModal({ serverId, serverName, onClose }: {
+    serverId: number; serverName: string; onClose: () => void;
 }) {
     const [invite, setInvite] = useState<{ code: string; invite_url: string } | null>(null);
     const [copied, setCopied] = useState(false);
     const [err, setErr] = useState('');
 
-    const generate = async () => {
-        setErr('');
-        try {
-            const res = await fetch(`${API}/api/servers/${serverId}/invites`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ user_id: userId }),
-            });
-            if (!res.ok) throw new Error(await res.text());
-            setInvite(await res.json());
-        } catch (e: any) { setErr(e.message); }
-    };
+    // Fetch the permanent code automatically when the modal opens
+    React.useEffect(() => {
+        fetch(`${API}/api/servers/${serverId}/invite`)
+            .then(r => r.ok ? r.json() : Promise.reject('Failed to load invite'))
+            .then(data => setInvite(data))
+            .catch(e => setErr(String(e)));
+    }, [serverId]);
 
     const copy = (text: string) => {
         navigator.clipboard.writeText(text);
@@ -177,10 +174,9 @@ export function InviteModal({ serverId, userId, serverName, onClose }: {
         <Modal title={`Invite people to ${serverName}`} onClose={onClose}>
             <ErrMsg msg={err} />
             {!invite ? (
-                <button onClick={generate} style={{
-                    width: '100%', padding: '12px', backgroundColor: '#5865F2', color: 'white',
-                    border: 'none', borderRadius: 4, fontWeight: 700, cursor: 'pointer', fontSize: 15,
-                }}>Generate Invite Link</button>
+                <div style={{ color: '#b9bbbe', textAlign: 'center', padding: 16 }}>
+                    {err || 'Loading invite…'}
+                </div>
             ) : (
                 <>
                     <p style={{ color: '#b9bbbe', marginTop: 0, fontSize: 13 }}>Share this link with your friends to invite them to your server.</p>
@@ -264,7 +260,7 @@ export function JoinServerModal({ userId, onClose, onJoined }: {
 export function StartDmModal({ userId, onClose, onStarted }: {
     userId: number;
     onClose: () => void;
-    onStarted: (channel: { id: number; name: string; is_dm: boolean; channel_type?: string }) => void;
+    onStarted: (channel: { id: number; name: string; is_dm: boolean; channel_type?: string }, partnerUsername: string) => void;
 }) {
     const [username, setUsername] = useState('');
     const [err, setErr] = useState('');
@@ -280,7 +276,7 @@ export function StartDmModal({ userId, onClose, onStarted }: {
             });
             if (!res.ok) throw new Error(await res.text());
             const data = await res.json();
-            onStarted(data);
+            onStarted(data, username);
             onClose();
         } catch (e: any) { setErr(e.message); }
     };

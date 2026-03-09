@@ -16,17 +16,35 @@ export default defineConfig(async () => ({
   server: {
     port: 1420,
     strictPort: true,
-    host: host || false,
+    host: host || '0.0.0.0',
     hmr: host
       ? {
-          protocol: "ws",
-          host,
-          port: 1421,
-        }
+        protocol: "ws",
+        host,
+        port: 1421,
+      }
       : undefined,
     watch: {
       // 3. tell Vite to ignore watching `src-tauri`
       ignored: ["**/src-tauri/**"],
+    },
+    // Proxy all /api traffic to the backend — so only port 1420 needs to be open
+    proxy: {
+      '/api': {
+        target: 'http://localhost:3000',
+        changeOrigin: true,
+        ws: true, // also proxies WebSocket connections (/api/ws)
+      },
+      // Proxy LiveKit signaling — so voice works on LAN without opening port 7880
+      '/rtc': {
+        target: 'http://localhost:7880',
+        changeOrigin: true,
+        ws: true,
+      },
+      '/twirp': {
+        target: 'http://localhost:7880',
+        changeOrigin: true,
+      },
     },
   },
 }));

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { API_BASE } from './api';
 
 type ChatMessage = {
     channel_id: number;
@@ -12,32 +13,22 @@ interface Props {
     username: string;
     channelId: number;
     channelName?: string; // Display name (resolved from DM mapping if needed)
+    ws: WebSocket | null;
+    wsStatus: 'connecting' | 'open' | 'closed';
+    incomingMsg: ChatMessage | null;
 }
 
-export default function Chat({ userId, username, channelId, channelName }: Props) {
+export default function Chat({ userId, username, channelId, channelName, ws, wsStatus, incomingMsg }: Props) {
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [input, setInput] = useState('');
-    const [wsStatus, setWsStatus] = useState<'connecting' | 'open' | 'closed'>('connecting');
-    const socketRef = useRef<WebSocket | null>(null);
     const bottomRef = useRef<HTMLDivElement | null>(null);
 
-    // Connect WebSocket
+    // Handle incoming messages
     useEffect(() => {
-        const ws = new WebSocket('ws://127.0.0.1:3000/api/ws');
-        ws.onopen = () => setWsStatus('open');
-        ws.onclose = () => setWsStatus('closed');
-        ws.onerror = (err) => { console.error('WS Error', err); setWsStatus('closed'); };
-        ws.onmessage = (event) => {
-            try {
-                const data: ChatMessage = JSON.parse(event.data);
-                if (data.channel_id === channelId) {
-                    setMessages((prev) => [...prev, data]);
-                }
-            } catch (e) { /* ignore */ }
-        };
-        socketRef.current = ws;
-        return () => ws.close();
-    }, [channelId]);
+        if (incomingMsg && incomingMsg.channel_id === channelId) {
+            setMessages((prev) => [...prev, incomingMsg]);
+        }
+    }, [incomingMsg, channelId]);
 
     // Scroll to bottom on new message
     useEffect(() => {
@@ -47,16 +38,16 @@ export default function Chat({ userId, username, channelId, channelName }: Props
     // Load history
     useEffect(() => {
         setMessages([]);
-        fetch(`http://127.0.0.1:3000/api/channels/${channelId}/messages`)
+        fetch(`${API_BASE}/api/channels/${channelId}/messages`)
             .then(r => r.json()).then(data => { if (Array.isArray(data)) setMessages(data); })
             .catch(() => { });
     }, [channelId]);
 
     const send = (e: React.FormEvent) => {
         e.preventDefault();
-        if (!input.trim() || socketRef.current?.readyState !== WebSocket.OPEN) return;
+        if (!input.trim() || ws?.readyState !== WebSocket.OPEN) return;
         const msg: ChatMessage = { channel_id: channelId, user_id: userId, username, content: input };
-        socketRef.current!.send(JSON.stringify(msg));
+        ws.send(JSON.stringify(msg));
         setInput('');
     };
 
