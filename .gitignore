@@ -1,0 +1,40 @@
+# ─── Rust / Backend ───────────────────────────────────────────────────────────
+target/
+**/*.rs.bk
+Cargo.lock
+
+# SQLx offline query cache (keep .sqlx if you use offline mode intentionally)
+.sqlx/
+
+# ─── Node / Frontend ──────────────────────────────────────────────────────────
+node_modules/
+dist/
+.vite/
+
+# Tauri build output
+src-tauri/target/
+src-tauri/WixTools/
+
+# ─── Environment & Secrets ────────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# ─── OS & Editor ──────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+.vscode/
+.idea/
+*.suo
+*.user
+
+# ─── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
