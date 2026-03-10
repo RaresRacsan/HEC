@@ -1,4 +1,17 @@
 services:
+  backend:
+    build: ./backend
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - DATABASE_URL=postgres://hec_user:hec_password@postgres:5432/hec_db
+      - LIVEKIT_URL=wss://blypp.tech
+    depends_on:
+      - postgres
+      - livekit
+    restart: always
+
   livekit:
     image: livekit/livekit-server:latest
     command: --dev --bind 0.0.0.0
@@ -8,6 +21,7 @@ services:
       - "7882:7882/udp"
     environment:
       - "LIVEKIT_KEYS=devkey: secret"
+    restart: always
 
   postgres:
     image: postgres:15-alpine
@@ -19,6 +33,7 @@ services:
       - POSTGRES_DB=hec_db
     volumes:
       - pgdata:/var/lib/postgresql/data
+    restart: always
 
 volumes:
   pgdata:
