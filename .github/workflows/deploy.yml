@@ -30,8 +30,5 @@ jobs:
             npm install
             npm run build
             
-            # Note: Because Nginx serves static files directly from a directory
-            # (likely /home/debian/app/frontend/dist as per /etc/nginx/sites-available/blypp.tech),
-            # just running "npm run build" is enough to update the live site!
-            # If your Nginx config points to a different folder, you would copy the dist folder there:
-            # sudo cp -r dist/* /var/www/html/
+            # 5. Move the build folder to where Nginx serves the frontend
+            sudo cp -r dist/* /var/www/blypp.tech/html/
