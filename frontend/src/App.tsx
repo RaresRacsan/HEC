@@ -1,7 +1,6 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import {
   LiveKitRoom,
-  VideoConference,
   RoomAudioRenderer,
 } from '@livekit/components-react';
 import '@livekit/components-styles';
@@ -10,6 +9,7 @@ import { API_BASE, WS_BASE } from './api';
 
 import Chat from './Chat';
 import Auth from './Auth';
+import { CustomVideoConference } from './CustomVideoConference';
 import {
   CreateServerModal,
   CreateChannelModal,
@@ -17,6 +17,7 @@ import {
   JoinServerModal,
   StartDmModal,
 } from './Modals';
+import { SettingsModal } from './SettingsModal';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 interface User { id: number; username: string; role?: string; }
@@ -98,21 +99,16 @@ export default function App() {
 
   // Modals
   const [modal, setModal] = useState<ModalType>(null);
+  const [showSettings, setShowSettings] = useState(false);
 
-  // Logout popup
-  const [showUserMenu, setShowUserMenu] = useState(false);
-  const userMenuRef = useRef<HTMLDivElement>(null);
-
-  // Close user menu on outside click
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
-        setShowUserMenu(false);
-      }
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, []);
+  // Device settings
+  const [selectedAudio, setSelectedAudio] = useState(() => localStorage.getItem('hec_audio') || '');
+  const [selectedVideo, setSelectedVideo] = useState(() => localStorage.getItem('hec_video') || '');
+  const [selectedOutput, setSelectedOutput] = useState(() => localStorage.getItem('hec_output') || '');
+  const [masterVolume, setMasterVolume] = useState(() => {
+    const v = localStorage.getItem('hec_volume');
+    return v ? Number(v) : 100;
+  });
 
   // ── Fetch servers when user logs in ────────────────────────────────────
   useEffect(() => {
@@ -377,38 +373,12 @@ export default function App() {
 
         <div style={{ flexGrow: 1 }} />
 
-        {/* User bar with logout popup */}
-        <div ref={userMenuRef} style={{ position: 'relative' }}>
-          {showUserMenu && (
-            <div style={{
-              position: 'absolute', bottom: '100%', left: 0, right: 0,
-              backgroundColor: '#18191c', borderRadius: '8px 8px 0 0', padding: 8,
-              boxShadow: '0 -4px 16px rgba(0,0,0,0.4)',
-              zIndex: 100,
-            }}>
-              <button
-                onClick={() => { setUser(null); setShowUserMenu(false); setServers([]); setChannels([]); setActiveServer(null); setActiveChannel(null); }}
-                style={{
-                  width: '100%', padding: '8px 12px', borderRadius: 4, cursor: 'pointer',
-                  backgroundColor: 'transparent', color: '#ed4245', textAlign: 'left',
-                  fontWeight: 600, fontSize: 14,
-                  transition: 'background-color 0.1s',
-                }}
-                onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#ed424520')}
-                onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
-              >
-                🚪 Log Out
-              </button>
-            </div>
-          )}
+        {/* User bar with Settings button */}
+        <div style={{ position: 'relative' }}>
           <div
-            onClick={() => setShowUserMenu(prev => !prev)}
             style={{
               padding: '8px 12px', backgroundColor: '#292b2f', display: 'flex', alignItems: 'center', gap: 8,
-              cursor: 'pointer', transition: 'background-color 0.1s',
             }}
-            onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#34373c')}
-            onMouseLeave={e => (e.currentTarget.style.backgroundColor = '#292b2f')}
           >
             <div style={{
               width: 32, height: 32, borderRadius: '50%', backgroundColor: '#5865F2',
@@ -419,14 +389,26 @@ export default function App() {
               {/* Online indicator dot */}
               <div style={{
                 position: 'absolute', bottom: -1, right: -1, width: 12, height: 12,
-                borderRadius: '50%', backgroundColor: '#3ba55d', border: '2px solid #292b2f',
+                borderRadius: '50%', backgroundColor: wsStatus === 'open' ? '#3ba55d' : '#72767d', border: '2px solid #292b2f',
               }} />
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ color: 'white', fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user.username}</div>
-              <div style={{ color: '#3ba55d', fontSize: 11 }}>● Online</div>
+              {wsStatus === 'open' ? (
+                <div style={{ color: '#3ba55d', fontSize: 11 }}>● Online</div>
+              ) : (
+                <div style={{ color: '#72767d', fontSize: 11 }}>● Offline</div>
+              )}
             </div>
-            <div style={{ color: '#b9bbbe', fontSize: 14 }}>⚙️</div>
+            <div
+              onClick={() => setShowSettings(true)}
+              style={{ color: '#b9bbbe', fontSize: 16, cursor: 'pointer', padding: 4, borderRadius: 4, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#34373c'; e.currentTarget.style.color = '#dcddde'; }}
+              onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = '#b9bbbe'; }}
+              title="User Settings"
+            >
+              ⚙️
+            </div>
           </div>
         </div>
       </div>
@@ -508,7 +490,9 @@ export default function App() {
 
         {isVoice && token && livekitUrl.startsWith('ws') && (
           <LiveKitRoom
-            video audio
+            video={selectedVideo ? { deviceId: selectedVideo } : true}
+            audio={selectedAudio ? { deviceId: selectedAudio } : true}
+            options={{ audioOutput: selectedOutput ? { deviceId: selectedOutput } : undefined }}
             token={token}
             serverUrl={livekitUrl}
             data-lk-theme="default"
@@ -520,8 +504,8 @@ export default function App() {
               overflow: 'hidden',    // prevent controls from escaping viewport
             }}
           >
-            <VideoConference />
-            <RoomAudioRenderer />
+            <CustomVideoConference />
+            <RoomAudioRenderer volume={masterVolume / 100} />
           </LiveKitRoom>
         )}
         {isVoice && !token && (
@@ -532,6 +516,26 @@ export default function App() {
       </div>
 
       {/* ── Modals ────────────────────────────────────────────────────── */}
+      {showSettings && (
+        <SettingsModal
+          onClose={() => setShowSettings(false)}
+          onLogout={() => { setUser(null); setShowSettings(false); setServers([]); setChannels([]); setActiveServer(null); setActiveChannel(null); }}
+          selectedAudioDevice={selectedAudio}
+          selectedVideoDevice={selectedVideo}
+          selectedOutputDevice={selectedOutput}
+          masterVolume={masterVolume}
+          onDeviceChange={(a, v, o, vol) => {
+            setSelectedAudio(a);
+            setSelectedVideo(v);
+            setSelectedOutput(o);
+            setMasterVolume(vol);
+            localStorage.setItem('hec_audio', a || '');
+            localStorage.setItem('hec_video', v || '');
+            localStorage.setItem('hec_output', o || '');
+            localStorage.setItem('hec_volume', String(vol));
+          }}
+        />
+      )}
       {modal === 'createServer' && (
         <CreateServerModal userId={user.id} onClose={() => setModal(null)} onCreated={(s) => {
           setServers(prev => [...prev, s]);
@@ -653,7 +657,7 @@ function MemberList({ members, currentUserId, onlineUsers }: { members: User[]; 
   return (
     <div style={{ width: 240, backgroundColor: '#2f3136', padding: '16px 8px', overflowY: 'auto', flexShrink: 0 }}>
       <div style={{ fontSize: 11, fontWeight: 700, color: '#8e9297', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8, paddingLeft: 8 }}>
-        Online — {members.length}
+        Members — {members.length}
       </div>
       {members.map(m => (
         <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', borderRadius: 4, marginBottom: 2, cursor: 'default' }}
@@ -665,18 +669,20 @@ function MemberList({ members, currentUserId, onlineUsers }: { members: User[]; 
               {m.username.charAt(0).toUpperCase()}
             </div>
             {/* Status dot */}
-            {onlineUsers.includes(m.id) && (
-              <div style={{
-                position: 'absolute', bottom: -1, right: -1, width: 12, height: 12, borderRadius: '50%',
-                backgroundColor: '#3ba55d', border: '2px solid #2f3136',
-              }} />
-            )}
+            <div style={{
+              position: 'absolute', bottom: -1, right: -1, width: 12, height: 12, borderRadius: '50%',
+              backgroundColor: onlineUsers.includes(m.id) ? '#3ba55d' : '#72767d', border: '2px solid #2f3136',
+            }} />
           </div>
           <div>
             <div style={{ color: m.id === currentUserId ? '#5865F2' : '#dcddde', fontSize: 14, fontWeight: 500 }}>
               {m.username}{m.id === currentUserId ? ' (you)' : ''}
             </div>
-            <div style={{ color: '#3ba55d', fontSize: 11 }}>Online</div>
+            {onlineUsers.includes(m.id) ? (
+              <div style={{ color: '#3ba55d', fontSize: 11 }}>Online</div>
+            ) : (
+              <div style={{ color: '#72767d', fontSize: 11 }}>Offline</div>
+            )}
           </div>
         </div>
       ))}
