@@ -273,7 +273,7 @@ export default function App() {
     : '';
 
   return (
-    <div style={{ display: 'flex', width: '100vw', height: '100vh', overflow: 'hidden', backgroundColor: '#ff0000' }}>
+    <div style={{ display: 'flex', width: '100vw', height: '100vh', overflow: 'hidden', backgroundColor: '#36393f' }}>
 
       {/* ── 1. Nav Rail ──────────────────────────────────────────────── */}
       <div style={{
@@ -376,11 +376,6 @@ export default function App() {
         )}
 
         <div style={{ flexGrow: 1 }} />
-
-        {/* Version Indicator for CI/CD Test */}
-        <div style={{ padding: '8px 16px', color: '#72767d', fontSize: 11, textAlign: 'center', borderTop: '1px solid #202225' }}>
-          v1.0.1 - CI/CD Active 🚀
-        </div>
 
         {/* User bar with logout popup */}
         <div ref={userMenuRef} style={{ position: 'relative' }}>
