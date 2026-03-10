@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { API_BASE } from './api';
 
 export default function Auth({ onAuthSuccess }: { onAuthSuccess: (user: any) => void }) {
     const [isLogin, setIsLogin] = useState(true);
@@ -10,7 +11,7 @@ export default function Auth({ onAuthSuccess }: { onAuthSuccess: (user: any) => 
         e.preventDefault();
         setError('');
 
-        const endpoint = isLogin ? '/api/login' : '/api/register';
+        const endpoint = isLogin ? `${API_BASE}/api/login` : `${API_BASE}/api/register`;
 
         try {
             const res = await fetch(endpoint, {
