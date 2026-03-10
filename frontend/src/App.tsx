@@ -273,7 +273,7 @@ export default function App() {
     : '';
 
   return (
-    <div style={{ display: 'flex', width: '100vw', height: '100vh', overflow: 'hidden', backgroundColor: '#36393f' }}>
+    <div style={{ display: 'flex', width: '100vw', height: '100vh', overflow: 'hidden', backgroundColor: '#ff0000' }}>
 
       {/* ── 1. Nav Rail ──────────────────────────────────────────────── */}
       <div style={{
