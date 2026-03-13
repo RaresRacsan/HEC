@@ -25,7 +25,7 @@ Key features:
 |----------|-------------------------------------|
 | Frontend | React + TypeScript + Vite           |
 | Voice    | LiveKit (self-hosted or cloud)      |
-| Backend  | Go (Golang) REST + WebSocket API    |
+| Backend  | Rust (Axum) REST + WebSocket API    |
 | Deploy   | Docker Compose + Nginx              |
 
 ---
