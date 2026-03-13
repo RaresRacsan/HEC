@@ -117,11 +117,11 @@ export function CustomVideoConference() {
     );
 
     return (
-        <div style={{ display: 'flex', flexDirection: 'column', height: '100%', width: '100%', backgroundColor: '#202225' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', height: '100%', width: '100%', backgroundColor: 'var(--bg-rail)' }}>
             <GridLayout tracks={tracks} style={{ flex: 1, padding: 8 }}>
                 <CustomParticipantTile />
             </GridLayout>
-            <ControlBar style={{ padding: '8px 16px', backgroundColor: '#2f3136' }} />
+            <ControlBar style={{ padding: '8px 16px', backgroundColor: 'var(--bg-sidebar)' }} />
         </div>
     );
 }

@@ -1,46 +1,81 @@
+/* blypp — brand CSS */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+/* ── blypp Color Tokens ──────────────────────────────────────────────────── */
+:root {
+  /* Backgrounds */
+  --bg-base:     #0f1117;
+  --bg-rail:     #0a0c11;
+  --bg-sidebar:  #141720;
+  --bg-surface:  #1c2030;
+  --bg-elevated: #232840;
+  --bg-input:    #0f1117;
+
+  /* Accent — blypp teal */
+  --accent:      #0ea5e9;
+  --accent-dim:  #0284c7;
+  --accent-glow: rgba(14,165,233,0.25);
+
+  /* Status */
+  --online:  #22c55e;
+  --offline: #4b5563;
+  --danger:  #ef4444;
+  --warning: #f59e0b;
+
+  /* Text */
+  --text-primary:   #f1f5f9;
+  --text-secondary: #94a3b8;
+  --text-muted:     #475569;
+
+  /* Borders */
+  --border: rgba(255,255,255,0.06);
+}
+
 *, *::before, *::after {
-    margin: 0;
-    padding: 0;
-    box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
 }
 
 html, body, #root {
-    width: 100%;
-    height: 100%;
-    overflow: hidden;
-    background-color: #36393f;
-    color: #dcddde;
-    font-family: 'gg sans', 'Noto Sans', 'Helvetica Neue', Helvetica, Arial, sans-serif;
-    font-size: 16px;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background-color: var(--bg-base);
+  color: var(--text-primary);
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-size: 16px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-/* Override button / input defaults that come from Tauri Vite template */
+/* Override button / input defaults */
 input, button, textarea {
-    font-family: inherit;
-    font-size: inherit;
-    background: none;
-    border: none;
-    outline: none;
-    color: inherit;
-    box-shadow: none;
-    padding: 0;
-    border-radius: 0;
+  font-family: inherit;
+  font-size: inherit;
+  background: none;
+  border: none;
+  outline: none;
+  color: inherit;
+  box-shadow: none;
+  padding: 0;
+  border-radius: 0;
 }
 
 a {
-    color: #00aff4;
-    text-decoration: none;
+  color: var(--accent);
+  text-decoration: none;
 }
 
-::-webkit-scrollbar {
-    width: 8px;
-}
-::-webkit-scrollbar-track {
-    background: transparent;
-}
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
-    background: #202225;
-    border-radius: 4px;
+  background: var(--bg-elevated);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
 }

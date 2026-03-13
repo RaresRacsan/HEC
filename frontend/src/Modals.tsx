@@ -7,19 +7,27 @@ const API = API_BASE;
 function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
     return (
         <div style={{
-            position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)',
+            position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.75)',
             display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+            backdropFilter: 'blur(4px)',
         }} onClick={onClose}>
             <div style={{
-                backgroundColor: '#2f3136', borderRadius: 8, padding: '24px 28px', width: 440,
-                boxShadow: '0 8px 32px rgba(0,0,0,0.4)', position: 'relative',
+                backgroundColor: 'var(--bg-surface)',
+                border: '1px solid var(--border)',
+                borderRadius: 14, padding: '28px 32px', width: 440,
+                boxShadow: '0 24px 64px rgba(0,0,0,0.5)', position: 'relative',
+                animation: 'fadeIn 0.15s ease-out',
             }} onClick={e => e.stopPropagation()}>
-                <h2 style={{ margin: '0 0 20px', color: 'white', fontSize: 20 }}>{title}</h2>
+                <h2 style={{ margin: '0 0 20px', color: 'var(--text-primary)', fontSize: 19, fontWeight: 700 }}>{title}</h2>
                 {children}
                 <button onClick={onClose} style={{
                     position: 'absolute', top: 14, right: 16, background: 'none', border: 'none',
-                    color: '#8e9297', fontSize: 20, cursor: 'pointer', lineHeight: 1,
-                }}>✕</button>
+                    color: 'var(--text-muted)', fontSize: 20, cursor: 'pointer', lineHeight: 1,
+                    transition: 'color 0.15s',
+                }}
+                    onMouseEnter={e => e.currentTarget.style.color = 'var(--text-primary)'}
+                    onMouseLeave={e => e.currentTarget.style.color = 'var(--text-muted)'}
+                >✕</button>
             </div>
         </div>
     );
@@ -30,11 +38,21 @@ function Input({ label, value, onChange, placeholder, type = 'text' }: {
 }) {
     return (
         <div style={{ marginBottom: 16 }}>
-            <label style={{ display: 'block', marginBottom: 6, color: '#b9bbbe', fontSize: 12, fontWeight: 700, textTransform: 'uppercase' }}>
+            <label style={{ display: 'block', marginBottom: 6, color: 'var(--text-secondary)', fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                 {label}
             </label>
-            <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
-                style={{ width: '100%', padding: '10px 12px', backgroundColor: '#202225', border: 'none', borderRadius: 4, color: 'white', outline: 'none', boxSizing: 'border-box' }} />
+            <input
+                type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+                style={{
+                    width: '100%', padding: '10px 14px',
+                    backgroundColor: 'var(--bg-input)',
+                    border: '1px solid var(--border)',
+                    borderRadius: 8, color: 'var(--text-primary)', outline: 'none',
+                    boxSizing: 'border-box', fontSize: 15, transition: 'border-color 0.15s',
+                }}
+                onFocus={e => e.currentTarget.style.borderColor = 'var(--accent)'}
+                onBlur={e => e.currentTarget.style.borderColor = 'var(--border)'}
+            />
         </div>
     );
 }
@@ -42,17 +60,29 @@ function Input({ label, value, onChange, placeholder, type = 'text' }: {
 function SubmitBtn({ label }: { label: string }) {
     return (
         <button type="submit" style={{
-            width: '100%', padding: '12px', backgroundColor: '#5865F2', color: 'white',
-            border: 'none', borderRadius: 4, fontWeight: 700, cursor: 'pointer', marginTop: 8, fontSize: 15,
-        }}>{label}</button>
+            width: '100%', padding: '11px',
+            background: 'linear-gradient(135deg, var(--accent) 0%, #38bdf8 100%)',
+            color: 'white', border: 'none', borderRadius: 8,
+            fontWeight: 700, cursor: 'pointer', marginTop: 8, fontSize: 15,
+            boxShadow: '0 4px 12px var(--accent-glow)',
+            transition: 'opacity 0.15s',
+        }}
+            onMouseEnter={e => e.currentTarget.style.opacity = '0.9'}
+            onMouseLeave={e => e.currentTarget.style.opacity = '1'}
+        >{label}</button>
     );
 }
 
 function ErrMsg({ msg }: { msg: string }) {
-    return msg ? <div style={{ color: '#ed4245', marginBottom: 12, fontSize: 13 }}>{msg}</div> : null;
+    return msg ? (
+        <div style={{
+            backgroundColor: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)',
+            color: '#fca5a5', borderRadius: 8, marginBottom: 14, fontSize: 13, padding: '9px 13px',
+        }}>{msg}</div>
+    ) : null;
 }
 
-// ─── 1. Create Server Modal ────────────────────────────────────────────────
+// ─── 1. Create Space Modal ────────────────────────────────────────────────
 export function CreateServerModal({ userId, onClose, onCreated }: {
     userId: number;
     onClose: () => void;
@@ -71,21 +101,20 @@ export function CreateServerModal({ userId, onClose, onCreated }: {
                 body: JSON.stringify({ name, user_id: userId }),
             });
             if (!res.ok) throw new Error(await res.text());
-            const data = await res.json();
-            onCreated(data);
+            onCreated(await res.json());
             onClose();
         } catch (e: any) { setErr(e.message); }
     };
 
     return (
-        <Modal title="Create Your Server" onClose={onClose}>
-            <p style={{ color: '#b9bbbe', marginTop: 0, marginBottom: 20, fontSize: 14 }}>
-                Give your new server a name. You can always change it later.
+        <Modal title="Create a Space" onClose={onClose}>
+            <p style={{ color: 'var(--text-muted)', marginTop: 0, marginBottom: 20, fontSize: 14 }}>
+                Give your new space a name. You can always change it later.
             </p>
             <form onSubmit={handle}>
                 <ErrMsg msg={err} />
-                <Input label="Server Name" value={name} onChange={setName} placeholder="My Awesome Server" />
-                <SubmitBtn label="Create Server" />
+                <Input label="Space Name" value={name} onChange={setName} placeholder="My Awesome Space" />
+                <SubmitBtn label="Create Space" />
             </form>
         </Modal>
     );
@@ -112,8 +141,7 @@ export function CreateChannelModal({ serverId, onClose, onCreated }: {
                 body: JSON.stringify({ name, channel_type: type }),
             });
             if (!res.ok) throw new Error(await res.text());
-            const data = await res.json();
-            onCreated(data);
+            onCreated(await res.json());
             onClose();
         } catch (e: any) { setErr(e.message); }
     };
@@ -123,19 +151,22 @@ export function CreateChannelModal({ serverId, onClose, onCreated }: {
             <form onSubmit={handle}>
                 <ErrMsg msg={err} />
                 <div style={{ marginBottom: 16 }}>
-                    <label style={{ display: 'block', marginBottom: 6, color: '#b9bbbe', fontSize: 12, fontWeight: 700, textTransform: 'uppercase' }}>Channel Type</label>
+                    <label style={{ display: 'block', marginBottom: 6, color: 'var(--text-secondary)', fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                        Channel Type
+                    </label>
                     <div style={{ display: 'flex', gap: 8 }}>
                         {(['text', 'voice'] as const).map(t => (
                             <div key={t} onClick={() => setType(t)} style={{
-                                flex: 1, padding: '12px', borderRadius: 4, cursor: 'pointer',
-                                backgroundColor: type === t ? '#393c43' : '#202225',
-                                border: `2px solid ${type === t ? '#5865F2' : 'transparent'}`,
-                                color: 'white', display: 'flex', alignItems: 'center', gap: 8,
+                                flex: 1, padding: '12px', borderRadius: 8, cursor: 'pointer',
+                                backgroundColor: type === t ? 'rgba(14,165,233,0.15)' : 'var(--bg-input)',
+                                border: `1.5px solid ${type === t ? 'var(--accent)' : 'var(--border)'}`,
+                                color: type === t ? 'var(--accent)' : 'var(--text-secondary)',
+                                display: 'flex', alignItems: 'center', gap: 8, transition: 'all 0.15s',
                             }}>
                                 <span>{t === 'text' ? '#' : '🔊'}</span>
                                 <div>
-                                    <div style={{ fontWeight: 600, textTransform: 'capitalize' }}>{t}</div>
-                                    <div style={{ fontSize: 12, color: '#b9bbbe' }}>{t === 'text' ? 'Send messages' : 'Jump in and talk'}</div>
+                                    <div style={{ fontWeight: 600, textTransform: 'capitalize', color: type === t ? 'var(--text-primary)' : 'inherit' }}>{t}</div>
+                                    <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{t === 'text' ? 'Send messages' : 'Jump in and talk'}</div>
                                 </div>
                             </div>
                         ))}
@@ -148,7 +179,7 @@ export function CreateChannelModal({ serverId, onClose, onCreated }: {
     );
 }
 
-// ─── 3. Invite People Modal ────────────────────────────────────────────────
+// ─── 3. Invite Modal ────────────────────────────────────────────────────────
 export function InviteModal({ serverId, serverName, onClose }: {
     serverId: number; serverName: string; onClose: () => void;
 }) {
@@ -156,7 +187,6 @@ export function InviteModal({ serverId, serverName, onClose }: {
     const [copied, setCopied] = useState(false);
     const [err, setErr] = useState('');
 
-    // Fetch the permanent code automatically when the modal opens
     React.useEffect(() => {
         fetch(`${API}/api/servers/${serverId}/invite`)
             .then(r => r.ok ? r.json() : Promise.reject('Failed to load invite'))
@@ -174,38 +204,45 @@ export function InviteModal({ serverId, serverName, onClose }: {
         <Modal title={`Invite people to ${serverName}`} onClose={onClose}>
             <ErrMsg msg={err} />
             {!invite ? (
-                <div style={{ color: '#b9bbbe', textAlign: 'center', padding: 16 }}>
-                    {err || 'Loading invite…'}
+                <div style={{ color: 'var(--text-muted)', textAlign: 'center', padding: 20 }}>
+                    {err || 'Loading invite link…'}
                 </div>
             ) : (
                 <>
-                    <p style={{ color: '#b9bbbe', marginTop: 0, fontSize: 13 }}>Share this link with your friends to invite them to your server.</p>
-
+                    <p style={{ color: 'var(--text-muted)', marginTop: 0, fontSize: 13 }}>
+                        Share this link with friends to invite them to your space.
+                    </p>
                     <div style={{ marginBottom: 16 }}>
-                        <label style={{ display: 'block', marginBottom: 6, color: '#b9bbbe', fontSize: 12, fontWeight: 700, textTransform: 'uppercase' }}>Invite Link</label>
+                        <label style={{ display: 'block', marginBottom: 6, color: 'var(--text-secondary)', fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Invite Link</label>
                         <div style={{ display: 'flex', gap: 8 }}>
                             <input readOnly value={invite.invite_url} style={{
-                                flex: 1, padding: '10px 12px', backgroundColor: '#202225', border: 'none',
-                                borderRadius: 4, color: 'white', outline: 'none',
+                                flex: 1, padding: '10px 12px', backgroundColor: 'var(--bg-input)',
+                                border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text-primary)', outline: 'none',
                             }} />
                             <button onClick={() => copy(invite.invite_url)} style={{
-                                padding: '10px 16px', backgroundColor: copied ? '#3ba55d' : '#5865F2',
-                                color: 'white', border: 'none', borderRadius: 4, cursor: 'pointer', fontWeight: 600, transition: 'background-color 0.2s',
+                                padding: '10px 18px',
+                                background: copied ? 'var(--online)' : 'var(--accent)',
+                                color: 'white', border: 'none', borderRadius: 8,
+                                cursor: 'pointer', fontWeight: 600, transition: 'background 0.2s', fontSize: 14,
                             }}>
                                 {copied ? '✓ Copied' : 'Copy'}
                             </button>
                         </div>
                     </div>
-
                     <div>
-                        <label style={{ display: 'block', marginBottom: 6, color: '#b9bbbe', fontSize: 12, fontWeight: 700, textTransform: 'uppercase' }}>Invite Code</label>
-                        <div style={{ display: 'flex', gap: 8 }}>
-                            <code style={{ flex: 1, padding: '10px 12px', backgroundColor: '#202225', borderRadius: 4, color: '#00aff4', fontFamily: 'monospace', fontSize: 16, letterSpacing: 2 }}>
+                        <label style={{ display: 'block', marginBottom: 6, color: 'var(--text-secondary)', fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Invite Code</label>
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                            <code style={{
+                                flex: 1, padding: '10px 14px', backgroundColor: 'var(--bg-input)',
+                                border: '1px solid var(--border)', borderRadius: 8,
+                                color: 'var(--accent)', fontFamily: 'monospace', fontSize: 17, letterSpacing: 3,
+                            }}>
                                 {invite.code}
                             </code>
                             <button onClick={() => copy(invite.code)} style={{
-                                padding: '10px 16px', backgroundColor: copied ? '#3ba55d' : '#4f545c',
-                                color: 'white', border: 'none', borderRadius: 4, cursor: 'pointer', fontWeight: 600,
+                                padding: '10px 16px', backgroundColor: 'var(--bg-elevated)',
+                                color: 'var(--text-primary)', border: '1px solid var(--border)',
+                                borderRadius: 8, cursor: 'pointer', fontWeight: 600,
                             }}>
                                 {copied ? '✓' : 'Copy'}
                             </button>
@@ -236,21 +273,20 @@ export function JoinServerModal({ userId, onClose, onJoined }: {
                 body: JSON.stringify({ user_id: userId, name: '' }),
             });
             if (!res.ok) throw new Error(await res.text());
-            const data = await res.json();
-            onJoined(data);
+            onJoined(await res.json());
             onClose();
         } catch (e: any) { setErr(e.message); }
     };
 
     return (
-        <Modal title="Join a Server" onClose={onClose}>
-            <p style={{ color: '#b9bbbe', marginTop: 0, marginBottom: 20, fontSize: 14 }}>
-                Enter an invite code or link to join a server.
+        <Modal title="Join a Space" onClose={onClose}>
+            <p style={{ color: 'var(--text-muted)', marginTop: 0, marginBottom: 20, fontSize: 14 }}>
+                Enter an invite code or link to join a space.
             </p>
             <form onSubmit={handle}>
                 <ErrMsg msg={err} />
                 <Input label="Invite Code" value={code} onChange={setCode} placeholder="Enter invite code (e.g. 1A2B3C4D)" />
-                <SubmitBtn label="Join Server" />
+                <SubmitBtn label="Join Space" />
             </form>
         </Modal>
     );
@@ -275,16 +311,15 @@ export function StartDmModal({ userId, onClose, onStarted }: {
                 body: JSON.stringify({ from_user_id: userId, to_username: username }),
             });
             if (!res.ok) throw new Error(await res.text());
-            const data = await res.json();
-            onStarted(data, username);
+            onStarted(await res.json(), username);
             onClose();
         } catch (e: any) { setErr(e.message); }
     };
 
     return (
-        <Modal title="Open Direct Message" onClose={onClose}>
-            <p style={{ color: '#b9bbbe', marginTop: 0, marginBottom: 20, fontSize: 14 }}>
-                Enter a username to start or open a direct message conversation.
+        <Modal title="New Direct Message" onClose={onClose}>
+            <p style={{ color: 'var(--text-muted)', marginTop: 0, marginBottom: 20, fontSize: 14 }}>
+                Enter a username to start a private conversation.
             </p>
             <form onSubmit={handle}>
                 <ErrMsg msg={err} />

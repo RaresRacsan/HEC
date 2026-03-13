@@ -12,7 +12,7 @@ interface Props {
     userId: number;
     username: string;
     channelId: number;
-    channelName?: string; // Display name (resolved from DM mapping if needed)
+    channelName?: string;
     ws: WebSocket | null;
     wsStatus: 'connecting' | 'open' | 'closed';
     incomingMsg: ChatMessage | null;
@@ -23,19 +23,16 @@ export default function Chat({ userId, username, channelId, channelName, ws, wsS
     const [input, setInput] = useState('');
     const bottomRef = useRef<HTMLDivElement | null>(null);
 
-    // Handle incoming messages
     useEffect(() => {
         if (incomingMsg && incomingMsg.channel_id === channelId) {
             setMessages((prev) => [...prev, incomingMsg]);
         }
     }, [incomingMsg, channelId]);
 
-    // Scroll to bottom on new message
     useEffect(() => {
         bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [messages]);
 
-    // Load history
     useEffect(() => {
         setMessages([]);
         fetch(`${API_BASE}/api/channels/${channelId}/messages`)
@@ -51,7 +48,6 @@ export default function Chat({ userId, username, channelId, channelName, ws, wsS
         setInput('');
     };
 
-    // group consecutive messages from same user
     const grouped = messages.reduce<{ msg: ChatMessage; first: boolean }[]>((acc, msg, i) => {
         const prev = messages[i - 1];
         acc.push({ msg, first: !prev || prev.user_id !== msg.user_id });
@@ -59,38 +55,47 @@ export default function Chat({ userId, username, channelId, channelName, ws, wsS
     }, []);
 
     return (
-        <div style={{ display: 'flex', flexDirection: 'column', flex: 1, height: '100%', backgroundColor: '#36393f', minWidth: 0 }}>
-            {/* Status bar */}
+        <div style={{ display: 'flex', flexDirection: 'column', flex: 1, height: '100%', backgroundColor: 'var(--bg-base)', minWidth: 0 }}>
+            {/* Offline banner */}
             {wsStatus === 'closed' && (
-                <div style={{ backgroundColor: '#f04747', color: 'white', fontSize: 12, padding: '4px 16px', textAlign: 'center' }}>
-                    ⚠ Disconnected from chat server
+                <div style={{
+                    backgroundColor: 'rgba(239,68,68,0.15)', color: '#fca5a5',
+                    border: '1px solid rgba(239,68,68,0.3)',
+                    fontSize: 12, padding: '6px 16px', textAlign: 'center',
+                }}>
+                    ⚠ Disconnected — messages won't send until reconnected
                 </div>
             )}
 
             {/* Messages */}
             <div style={{ flex: 1, overflowY: 'auto', padding: '16px 0', display: 'flex', flexDirection: 'column' }}>
                 {messages.length === 0 && (
-                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#72767d' }}>
-                        <div style={{ fontSize: 48, marginBottom: 12 }}>👋</div>
-                        <div style={{ fontWeight: 700, fontSize: 22, color: 'white' }}>
-                            {channelName ? `Welcome to #${channelName}!` : 'No messages yet'}
+                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', gap: 10 }}>
+                        <div style={{ fontSize: 44 }}>💬</div>
+                        <div style={{ fontWeight: 700, fontSize: 20, color: 'var(--text-primary)' }}>
+                            {channelName ? `Start of #${channelName}` : 'No messages yet'}
                         </div>
-                        <div style={{ fontSize: 14, marginTop: 4 }}>This is the start of the conversation.</div>
+                        <div style={{ fontSize: 14 }}>Be the first to say something!</div>
                     </div>
                 )}
-
                 {grouped.map(({ msg, first }, i) => (
                     <MessageRow key={i} msg={msg} first={first} isOwn={msg.user_id === userId} />
                 ))}
                 <div ref={bottomRef} />
             </div>
 
-            {/* Input */}
-            <form onSubmit={send} style={{ margin: '0 16px 16px', position: 'relative' }}>
+            {/* Input bar */}
+            <form onSubmit={send} style={{ margin: '0 16px 16px' }}>
                 <div style={{
-                    display: 'flex', alignItems: 'center', backgroundColor: '#40444b',
-                    borderRadius: 8, padding: '0 12px',
-                }}>
+                    display: 'flex', alignItems: 'center',
+                    backgroundColor: 'var(--bg-surface)',
+                    border: '1px solid var(--border)',
+                    borderRadius: 10, padding: '0 14px',
+                    transition: 'border-color 0.15s',
+                }}
+                    onFocusCapture={e => (e.currentTarget as HTMLElement).style.borderColor = 'var(--accent)'}
+                    onBlurCapture={e => (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)'}
+                >
                     <input
                         type="text"
                         value={input}
@@ -98,17 +103,15 @@ export default function Chat({ userId, username, channelId, channelName, ws, wsS
                         placeholder={`Message ${channelName ? '#' + channelName : '...'}`}
                         style={{
                             flex: 1, background: 'none', border: 'none', outline: 'none',
-                            color: '#dcddde', fontSize: 15, padding: '14px 0',
-                            caretColor: '#dcddde',
+                            color: 'var(--text-primary)', fontSize: 15, padding: '14px 0',
+                            caretColor: 'var(--accent)',
                         }}
                     />
                     <button type="submit" style={{
                         background: 'none', border: 'none', cursor: 'pointer', padding: '4px 8px',
-                        color: input.trim() ? '#5865F2' : '#4f545c',
-                        fontSize: 22, display: 'flex', alignItems: 'center', transition: 'color 0.1s',
-                    }}>
-                        ➤
-                    </button>
+                        color: input.trim() ? 'var(--accent)' : 'var(--text-muted)',
+                        fontSize: 20, display: 'flex', alignItems: 'center', transition: 'color 0.1s',
+                    }}>➤</button>
                 </div>
             </form>
         </div>
@@ -116,41 +119,36 @@ export default function Chat({ userId, username, channelId, channelName, ws, wsS
 }
 
 function MessageRow({ msg, first, isOwn }: { msg: ChatMessage; first: boolean; isOwn: boolean }) {
-    // Generate a consistent colour from username
     const avatarColor = stringToColor(msg.username);
 
     return (
-        <div style={{
-            padding: first ? '16px 16px 2px' : '2px 16px',
-            display: 'flex', gap: 16, alignItems: 'flex-start',
-        }}
-            onMouseEnter={e => (e.currentTarget as HTMLElement).style.backgroundColor = 'rgba(0,0,0,0.04)'}
+        <div
+            style={{ padding: first ? '14px 16px 2px' : '2px 16px', display: 'flex', gap: 14, alignItems: 'flex-start' }}
+            onMouseEnter={e => (e.currentTarget as HTMLElement).style.backgroundColor = 'rgba(255,255,255,0.02)'}
             onMouseLeave={e => (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent'}
         >
-            {/* Avatar column */}
-            <div style={{ width: 40, flexShrink: 0 }}>
+            <div style={{ width: 38, flexShrink: 0 }}>
                 {first ? (
                     <div style={{
-                        width: 40, height: 40, borderRadius: '50%', backgroundColor: avatarColor,
+                        width: 38, height: 38, borderRadius: '50%',
+                        background: `linear-gradient(135deg, ${avatarColor} 0%, ${stringToColor(msg.username + '1')} 100%)`,
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        color: 'white', fontWeight: 700, fontSize: 16, userSelect: 'none',
+                        color: 'white', fontWeight: 700, fontSize: 15, userSelect: 'none',
                     }}>
                         {msg.username.charAt(0).toUpperCase()}
                     </div>
                 ) : null}
             </div>
-
-            {/* Content */}
             <div style={{ flex: 1, minWidth: 0 }}>
                 {first && (
-                    <div style={{ marginBottom: 2 }}>
-                        <span style={{ fontWeight: 600, color: isOwn ? '#5865F2' : '#fff', marginRight: 8 }}>
+                    <div style={{ marginBottom: 3 }}>
+                        <span style={{ fontWeight: 600, color: isOwn ? 'var(--accent)' : 'var(--text-primary)', marginRight: 8 }}>
                             {msg.username}
                         </span>
-                        <span style={{ fontSize: 11, color: '#72767d' }}>Today</span>
+                        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Today</span>
                     </div>
                 )}
-                <div style={{ color: '#dcddde', fontSize: 15, wordBreak: 'break-word', lineHeight: 1.4 }}>
+                <div style={{ color: 'var(--text-secondary)', fontSize: 15, wordBreak: 'break-word', lineHeight: 1.5 }}>
                     {msg.content}
                 </div>
             </div>
@@ -159,7 +157,7 @@ function MessageRow({ msg, first, isOwn }: { msg: ChatMessage; first: boolean; i
 }
 
 function stringToColor(s: string): string {
-    const palette = ['#5865F2', '#3ba55d', '#faa61a', '#eb459e', '#ed4245', '#9b59b6', '#1abc9c', '#e67e22'];
+    const palette = ['#0ea5e9', '#22c55e', '#f59e0b', '#a855f7', '#ec4899', '#14b8a6', '#f97316', '#8b5cf6'];
     let hash = 0;
     for (let i = 0; i < s.length; i++) hash = s.charCodeAt(i) + ((hash << 5) - hash);
     return palette[Math.abs(hash) % palette.length];

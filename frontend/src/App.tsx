@@ -31,11 +31,9 @@ export type ChatMessage = {
   content: string;
 };
 
-// Resolve a DM channel's display name (extract the other user's ID, then look up)
 function dmDisplayName(ch: Channel, myId: number, memberCache: Map<number, string>): string {
   if (!ch.is_dm) return ch.name;
-  // name pattern: "dm-A-B"
-  const parts = ch.name.split('-'); // ["dm", "A", "B"]
+  const parts = ch.name.split('-');
   if (parts.length === 3) {
     const a = parseInt(parts[1], 10);
     const b = parseInt(parts[2], 10);
@@ -47,22 +45,45 @@ function dmDisplayName(ch: Channel, myId: number, memberCache: Map<number, strin
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 function stringToColor(s: string): string {
-  const palette = ['#5865F2', '#3ba55d', '#faa61a', '#eb459e', '#ed4245', '#9b59b6', '#1abc9c', '#e67e22'];
+  const palette = ['#0ea5e9', '#22c55e', '#f59e0b', '#a855f7', '#ec4899', '#14b8a6', '#f97316', '#8b5cf6'];
   let hash = 0;
   for (let i = 0; i < s.length; i++) hash = s.charCodeAt(i) + ((hash << 5) - hash);
   return palette[Math.abs(hash) % palette.length];
 }
 
+// ─── Server icon pill ───────────────────────────────────────────────────────
 function ServerIcon({ name, active, onClick }: { name: string; active: boolean; onClick: () => void }) {
   return (
-    <div onClick={onClick} title={name} style={{
-      width: 48, height: 48, borderRadius: active ? '16px' : '50%',
-      backgroundColor: active ? '#5865F2' : '#36393f',
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      cursor: 'pointer', color: 'white', fontWeight: 700, fontSize: 18,
-      transition: 'border-radius 0.15s, background-color 0.15s', flexShrink: 0, userSelect: 'none',
-      boxShadow: active ? '0 0 0 3px #5865F2, 0 0 0 5px #202225' : '0 0 0 2px #202225',
-    }}>
+    <div
+      onClick={onClick} title={name}
+      style={{
+        width: 44, height: 44,
+        borderRadius: active ? 14 : '50%',
+        background: active
+          ? 'linear-gradient(135deg, #0ea5e9 0%, #38bdf8 100%)'
+          : 'var(--bg-surface)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        cursor: 'pointer', color: active ? 'white' : 'var(--text-secondary)',
+        fontWeight: 700, fontSize: 17,
+        transition: 'border-radius 0.2s, background 0.2s',
+        flexShrink: 0, userSelect: 'none',
+        boxShadow: active ? '0 0 0 2px var(--accent), 0 4px 12px var(--accent-glow)' : 'none',
+      }}
+      onMouseEnter={e => {
+        if (!active) {
+          (e.currentTarget as HTMLElement).style.borderRadius = '14px';
+          (e.currentTarget as HTMLElement).style.background = 'var(--bg-elevated)';
+          (e.currentTarget as HTMLElement).style.color = 'var(--text-primary)';
+        }
+      }}
+      onMouseLeave={e => {
+        if (!active) {
+          (e.currentTarget as HTMLElement).style.borderRadius = '50%';
+          (e.currentTarget as HTMLElement).style.background = 'var(--bg-surface)';
+          (e.currentTarget as HTMLElement).style.color = 'var(--text-secondary)';
+        }
+      }}
+    >
       {name.charAt(0).toUpperCase()}
     </div>
   );
@@ -72,36 +93,22 @@ type ModalType = 'createServer' | 'joinServer' | 'createChannel' | 'invite' | 's
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
-
-  // Storage for global WebSocket stuff
   const [globalWs, setGlobalWs] = useState<WebSocket | null>(null);
   const [wsStatus, setWsStatus] = useState<'connecting' | 'open' | 'closed'>('connecting');
   const [lastChatMessage, setLastChatMessage] = useState<ChatMessage | null>(null);
   const [onlineUsers, setOnlineUsers] = useState<number[]>([]);
   const [voiceParticipants, setVoiceParticipants] = useState<Record<string, string[]>>({});
-
-  // LiveKit — URL uses same host as the page so voice goes through Vite's proxy
   const [token, setToken] = useState('');
   const [livekitUrl, setLivekitUrl] = useState(WS_BASE);
-
-  // Navigation
   const [view, setView] = useState<'dms' | 'server'>('dms');
   const [servers, setServers] = useState<Server[]>([]);
   const [activeServer, setActiveServer] = useState<Server | null>(null);
   const [serverMembers, setServerMembers] = useState<User[]>([]);
-
-  // Channels & DMs
   const [channels, setChannels] = useState<Channel[]>([]);
   const [activeChannel, setActiveChannel] = useState<Channel | null>(null);
-
-  // User ID cache for resolving DM names (userId → username)
   const [userCache, setUserCache] = useState<Map<number, string>>(new Map());
-
-  // Modals
   const [modal, setModal] = useState<ModalType>(null);
   const [showSettings, setShowSettings] = useState(false);
-
-  // Device settings
   const [selectedAudio, setSelectedAudio] = useState(() => localStorage.getItem('hec_audio') || '');
   const [selectedVideo, setSelectedVideo] = useState(() => localStorage.getItem('hec_video') || '');
   const [selectedOutput, setSelectedOutput] = useState(() => localStorage.getItem('hec_output') || '');
@@ -110,11 +117,9 @@ export default function App() {
     return v ? Number(v) : 100;
   });
 
-  // ── Fetch servers when user logs in ────────────────────────────────────
   useEffect(() => {
     if (!user) return;
     fetchServers();
-    // Prime cache with self
     setUserCache(prev => new Map(prev).set(user.id, user.username));
   }, [user]);
 
@@ -127,7 +132,6 @@ export default function App() {
     } catch { }
   };
 
-  // ── Fetch channels & members when server changes ──────────────────────
   useEffect(() => {
     if (!activeServer) return;
     setActiveChannel(null);
@@ -141,7 +145,6 @@ export default function App() {
         setChannels(Array.isArray(chData) ? chData : []);
         const members: User[] = Array.isArray(memData) ? memData : [];
         setServerMembers(members);
-        // Cache usernames for DM name resolution
         setUserCache(prev => {
           const next = new Map(prev);
           members.forEach(m => next.set(m.id, m.username));
@@ -151,17 +154,13 @@ export default function App() {
     })();
   }, [activeServer]);
 
-  // ── Poll voice participants ──────────────────────────────────────────────
   useEffect(() => {
     if (!activeServer || view !== 'server') return;
     let timer: number;
     const fetchParticipants = async () => {
       try {
         const res = await fetch(`${API_BASE}/api/servers/${activeServer.id}/voice-participants`);
-        if (res.ok) {
-          const data = await res.json();
-          setVoiceParticipants(data);
-        }
+        if (res.ok) setVoiceParticipants(await res.json());
       } catch { }
       timer = window.setTimeout(fetchParticipants, 5000);
     };
@@ -169,7 +168,6 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [activeServer, view]);
 
-  // ── Fetch DMs ─────────────────────────────────────────────────────────
   useEffect(() => {
     if (view !== 'dms' || !user) return;
     setActiveServer(null);
@@ -180,7 +178,6 @@ export default function App() {
         const data = await res.json();
         const dms: Channel[] = Array.isArray(data) ? data : [];
         setChannels(dms);
-        // Pre-fetch usernames for DM partners
         const ids = new Set<number>();
         dms.forEach(ch => {
           const parts = ch.name.split('-');
@@ -195,11 +192,7 @@ export default function App() {
             const res = await fetch(`${API_BASE}/api/users/${id}`);
             if (res.ok) {
               const u: { id: number; username: string } = await res.json();
-              setUserCache(prev => {
-                const next = new Map(prev);
-                next.set(u.id, u.username);
-                return next;
-              });
+              setUserCache(prev => { const next = new Map(prev); next.set(u.id, u.username); return next; });
             }
           } catch { }
         });
@@ -207,7 +200,6 @@ export default function App() {
     })();
   }, [view, user]);
 
-  // ── Global WebSocket ───────────────────────────────────────────────────
   useEffect(() => {
     if (!user) return;
     const ws = new WebSocket(`${WS_BASE}/api/ws?user_id=${user.id}`);
@@ -217,21 +209,14 @@ export default function App() {
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        if (data.type === 'presence') {
-          setOnlineUsers(data.online_users || []);
-        } else if (data.channel_id) {
-          setLastChatMessage(data as ChatMessage);
-        }
-      } catch (e) { /* ignore */ }
+        if (data.type === 'presence') setOnlineUsers(data.online_users || []);
+        else if (data.channel_id) setLastChatMessage(data as ChatMessage);
+      } catch { }
     };
     setGlobalWs(ws);
-    return () => {
-      ws.close();
-      setGlobalWs(null);
-    };
+    return () => { ws.close(); setGlobalWs(null); };
   }, [user]);
 
-  // ── Join voice ────────────────────────────────────────────────────────
   const joinVoice = async (ch: Channel) => {
     if (!user) return;
     try {
@@ -244,8 +229,6 @@ export default function App() {
       if (data.token && data.livekit_url?.startsWith('ws')) {
         setLivekitUrl(data.livekit_url);
         setToken(data.token);
-      } else {
-        console.error('Invalid token response', data);
       }
     } catch (e) { console.error(e); }
   };
@@ -269,43 +252,63 @@ export default function App() {
     : '';
 
   return (
-    <div style={{ display: 'flex', width: '100vw', height: '100vh', overflow: 'hidden', backgroundColor: '#36393f' }}>
+    <div style={{ display: 'flex', width: '100vw', height: '100vh', overflow: 'hidden', backgroundColor: 'var(--bg-base)' }}>
 
       {/* ── 1. Nav Rail ──────────────────────────────────────────────── */}
       <div style={{
-        width: 72, backgroundColor: '#202225', display: 'flex', flexDirection: 'column',
-        alignItems: 'center', padding: '12px 0', gap: 8, flexShrink: 0, overflowY: 'auto',
+        width: 68, backgroundColor: 'var(--bg-rail)', display: 'flex', flexDirection: 'column',
+        alignItems: 'center', padding: '12px 0', gap: 6, flexShrink: 0, overflowY: 'auto',
+        borderRight: '1px solid var(--border)',
       }}>
+        {/* blypp logo */}
+        <div title="blypp" style={{
+          width: 44, height: 44, borderRadius: 14, marginBottom: 6,
+          background: 'linear-gradient(135deg, #0ea5e9 0%, #38bdf8 100%)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 22, fontWeight: 800, color: 'white', flexShrink: 0,
+          boxShadow: '0 0 16px var(--accent-glow)',
+          letterSpacing: '-1px',
+        }}>b</div>
+
+        <RailDivider />
+
         <NavBtn emoji="💬" active={view === 'dms'} title="Direct Messages" onClick={() => setView('dms')} />
-        <Divider />
+
+        <RailDivider />
+
         {servers.map(s => (
           <ServerIcon key={s.id} name={s.name} active={view === 'server' && activeServer?.id === s.id}
             onClick={() => { setView('server'); setActiveServer(s); }} />
         ))}
-        <Divider />
-        <NavBtn emoji="🏠" title="Create a Server" onClick={() => setModal('createServer')} color="#3ba55d" />
-        <NavBtn emoji="🔗" title="Join a Server via Code" onClick={() => setModal('joinServer')} color="#5865F2" />
+
+        <RailDivider />
+
+        <NavBtn emoji="+" title="Create a Space" onClick={() => setModal('createServer')} accentOnHover />
+        <NavBtn emoji="🔗" title="Join a Space via Code" onClick={() => setModal('joinServer')} accentOnHover />
       </div>
 
-      {/* ── 2. Extension Panel ────────────────────────────────────────── */}
+      {/* ── 2. Sidebar ────────────────────────────────────────────────── */}
       <div style={{
-        width: 240, backgroundColor: '#2f3136', display: 'flex', flexDirection: 'column',
-        flexShrink: 0, overflowY: 'auto',
+        width: 240, backgroundColor: 'var(--bg-sidebar)', display: 'flex', flexDirection: 'column',
+        flexShrink: 0, overflowY: 'auto', borderRight: '1px solid var(--border)',
       }}>
+        {/* Sidebar header */}
         <div style={{
-          padding: '0 16px', height: 48, display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          fontWeight: 700, fontSize: 15, color: 'white', borderBottom: '1px solid #202225', flexShrink: 0,
+          padding: '0 16px', height: 52, display: 'flex', alignItems: 'center',
+          justifyContent: 'space-between', fontWeight: 700, fontSize: 15,
+          color: 'var(--text-primary)', borderBottom: '1px solid var(--border)', flexShrink: 0,
         }}>
-          <span>{view === 'dms' ? 'Direct Messages' : (activeServer?.name ?? 'Select a Server')}</span>
-          {view === 'dms' && <IconBtn title="New DM" onClick={() => setModal('startDm')}>✏️</IconBtn>}
+          <span>{view === 'dms' ? 'Direct Messages' : (activeServer?.name ?? 'Select a Space')}</span>
+          {view === 'dms' && <SidebarIconBtn title="New DM" onClick={() => setModal('startDm')}>✏️</SidebarIconBtn>}
           {view === 'server' && activeServer && (
             <div style={{ display: 'flex', gap: 4 }}>
-              <IconBtn title="Create Channel" onClick={() => setModal('createChannel')}>+</IconBtn>
-              <IconBtn title="Invite People" onClick={() => setModal('invite')}>👥</IconBtn>
+              <SidebarIconBtn title="Create Channel" onClick={() => setModal('createChannel')}>+</SidebarIconBtn>
+              <SidebarIconBtn title="Invite People" onClick={() => setModal('invite')}>👥</SidebarIconBtn>
             </div>
           )}
         </div>
 
+        {/* Server channels */}
         {view === 'server' && activeServer && (
           <>
             {textChannels.length > 0 && (
@@ -320,14 +323,19 @@ export default function App() {
                 {voiceChannels.map(ch => (
                   <div key={ch.id}>
                     <ChannelItem ch={ch} active={activeChannel?.id === ch.id} onClick={() => handleSelectChannel(ch)} isVoice />
-                    {voiceParticipants[ch.name] && voiceParticipants[ch.name].length > 0 && (
+                    {voiceParticipants[ch.name]?.length > 0 && (
                       <div style={{ paddingLeft: 40, paddingBottom: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
                         {voiceParticipants[ch.name].map(p => (
                           <div key={p} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <div style={{ width: 24, height: 24, borderRadius: '50%', backgroundColor: stringToColor(p), display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 700, fontSize: 10 }}>
+                            <div style={{
+                              width: 22, height: 22, borderRadius: '50%',
+                              backgroundColor: stringToColor(p),
+                              display: 'flex', alignItems: 'center', justifyContent: 'center',
+                              color: 'white', fontWeight: 700, fontSize: 10,
+                            }}>
                               {p.charAt(0).toUpperCase()}
                             </div>
-                            <span style={{ color: '#8e9297', fontSize: 13, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p}</span>
+                            <span style={{ color: 'var(--text-muted)', fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p}</span>
                           </div>
                         ))}
                       </div>
@@ -337,14 +345,15 @@ export default function App() {
               </ChannelSection>
             )}
             {channels.length === 0 && (
-              <div style={{ padding: 16, color: '#72767d', fontSize: 14 }}>
+              <div style={{ padding: 16, color: 'var(--text-muted)', fontSize: 14 }}>
                 No channels yet.{' '}
-                <span onClick={() => setModal('createChannel')} style={{ color: '#00aff4', cursor: 'pointer' }}>Create one!</span>
+                <span onClick={() => setModal('createChannel')} style={{ color: 'var(--accent)', cursor: 'pointer' }}>Create one!</span>
               </div>
             )}
           </>
         )}
 
+        {/* DM list */}
         {view === 'dms' && (
           <>
             {channels.map(ch => {
@@ -357,15 +366,15 @@ export default function App() {
                   active={activeChannel?.id === ch.id}
                   onClick={() => handleSelectChannel(ch)}
                   isDm
-                  showOnline={true}
+                  showOnline
                   isOnline={partnerId ? onlineUsers.includes(partnerId) : false}
                 />
               );
             })}
             {channels.length === 0 && (
-              <div style={{ padding: 16, color: '#72767d', fontSize: 14 }}>
+              <div style={{ padding: 16, color: 'var(--text-muted)', fontSize: 14 }}>
                 No DMs yet.{' '}
-                <span onClick={() => setModal('startDm')} style={{ color: '#00aff4', cursor: 'pointer' }}>Start one!</span>
+                <span onClick={() => setModal('startDm')} style={{ color: 'var(--accent)', cursor: 'pointer' }}>Start one!</span>
               </div>
             )}
           </>
@@ -373,101 +382,111 @@ export default function App() {
 
         <div style={{ flexGrow: 1 }} />
 
-        {/* User bar with Settings button */}
-        <div style={{ position: 'relative' }}>
-          <div
-            style={{
-              padding: '8px 12px', backgroundColor: '#292b2f', display: 'flex', alignItems: 'center', gap: 8,
-            }}
-          >
+        {/* User bar */}
+        <div style={{
+          padding: '10px 12px', backgroundColor: 'var(--bg-rail)',
+          borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8,
+        }}>
+          <div style={{ position: 'relative', flexShrink: 0 }}>
             <div style={{
-              width: 32, height: 32, borderRadius: '50%', backgroundColor: '#5865F2',
+              width: 34, height: 34, borderRadius: '50%',
+              background: `linear-gradient(135deg, ${stringToColor(user.username)} 0%, ${stringToColor(user.username + '1')} 100%)`,
               display: 'flex', alignItems: 'center', justifyContent: 'center',
-              color: 'white', fontWeight: 700, fontSize: 13, flexShrink: 0, position: 'relative',
+              color: 'white', fontWeight: 700, fontSize: 14,
             }}>
               {user.username.charAt(0).toUpperCase()}
-              {/* Online indicator dot */}
-              <div style={{
-                position: 'absolute', bottom: -1, right: -1, width: 12, height: 12,
-                borderRadius: '50%', backgroundColor: wsStatus === 'open' ? '#3ba55d' : '#72767d', border: '2px solid #292b2f',
-              }} />
             </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ color: 'white', fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user.username}</div>
-              {wsStatus === 'open' ? (
-                <div style={{ color: '#3ba55d', fontSize: 11 }}>● Online</div>
-              ) : (
-                <div style={{ color: '#72767d', fontSize: 11 }}>● Offline</div>
-              )}
+            <div style={{
+              position: 'absolute', bottom: -1, right: -1, width: 11, height: 11,
+              borderRadius: '50%',
+              backgroundColor: wsStatus === 'open' ? 'var(--online)' : 'var(--offline)',
+              border: '2px solid var(--bg-rail)',
+            }} />
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ color: 'var(--text-primary)', fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {user.username}
             </div>
-            <div
-              onClick={() => setShowSettings(true)}
-              style={{ color: '#b9bbbe', fontSize: 16, cursor: 'pointer', padding: 4, borderRadius: 4, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-              onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#34373c'; e.currentTarget.style.color = '#dcddde'; }}
-              onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = '#b9bbbe'; }}
-              title="User Settings"
-            >
-              ⚙️
+            <div style={{ fontSize: 11, color: wsStatus === 'open' ? 'var(--online)' : 'var(--offline)' }}>
+              {wsStatus === 'open' ? '● Online' : '● Offline'}
             </div>
           </div>
+          <div
+            onClick={() => setShowSettings(true)}
+            title="Settings"
+            style={{ color: 'var(--text-muted)', fontSize: 16, cursor: 'pointer', padding: 4, borderRadius: 6, display: 'flex', alignItems: 'center', transition: 'color 0.15s, background 0.15s' }}
+            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = 'var(--text-primary)'; (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--bg-elevated)'; }}
+            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)'; (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent'; }}
+          >⚙️</div>
         </div>
       </div>
 
       {/* ── 3. Main Content ───────────────────────────────────────────── */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
+        {/* Channel topbar */}
         {activeChannel && (
-          <div style={{ padding: '0 16px', height: 48, display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid #202225', flexShrink: 0, backgroundColor: '#36393f' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ color: '#8e9297', fontSize: 20 }}>{isVoice ? '🔊' : activeChannel.is_dm ? '👤' : '#'}</span>
-              <span style={{ color: 'white', fontWeight: 700 }}>{channelDisplayName}</span>
+          <div style={{
+            padding: '0 20px', height: 52,
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            borderBottom: '1px solid var(--border)', flexShrink: 0,
+            backgroundColor: 'var(--bg-surface)',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={{ color: 'var(--accent)', fontSize: 18 }}>
+                {isVoice ? '🔊' : activeChannel.is_dm ? '👤' : '#'}
+              </span>
+              <span style={{ color: 'var(--text-primary)', fontWeight: 700, fontSize: 15 }}>{channelDisplayName}</span>
             </div>
             {activeServer && (
               <div style={{ display: 'flex', gap: 8 }}>
                 {serverMembers.find(m => m.id === user?.id)?.role === 'owner' && (
                   <button
                     onClick={async () => {
-                      if (confirm(`Are you sure you want to delete ${activeServer.name}? This action cannot be undone.`)) {
+                      if (confirm(`Delete "${activeServer.name}"? This cannot be undone.`)) {
                         const res = await fetch(`${API_BASE}/api/servers/${activeServer.id}?user_id=${user?.id}`, { method: 'DELETE' });
-                        if (res.ok) {
-                          window.location.reload();
-                        } else {
-                          const err = await res.text();
-                          alert('Failed to delete server: ' + err);
-                        }
+                        if (res.ok) window.location.reload();
+                        else alert('Failed to delete space: ' + await res.text());
                       }
                     }}
-                    style={{ background: '#ed4245', color: 'white', padding: '6px 16px', borderRadius: 4, cursor: 'pointer', fontWeight: 600, fontSize: 13 }}
-                  >
-                    🗑️ Delete Server
-                  </button>
+                    style={{ background: 'rgba(239,68,68,0.15)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.3)', padding: '5px 14px', borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 13 }}
+                  >🗑 Delete Space</button>
                 )}
                 <button
                   onClick={() => setModal('invite')}
-                  style={{ background: '#5865F2', color: 'white', padding: '6px 16px', borderRadius: 4, cursor: 'pointer', fontWeight: 600, fontSize: 13 }}
-                >👥 Invite People</button>
+                  style={{ background: 'var(--accent)', color: 'white', padding: '5px 14px', borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 13, boxShadow: '0 2px 8px var(--accent-glow)' }}
+                >👥 Invite</button>
               </div>
             )}
           </div>
         )}
 
+        {/* Empty state */}
         {!activeChannel && !showMemberList && (
-          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', color: '#8e9297' }}>
-            <div style={{ fontSize: 48 }}>👋</div>
-            <div style={{ fontSize: 18, marginTop: 12 }}>Pick a channel or server to get started!</div>
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 12 }}>
+            <div style={{ fontSize: 56, filter: 'grayscale(0.2)' }}>💬</div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-primary)' }}>Welcome to blypp</div>
+            <div style={{ fontSize: 14, color: 'var(--text-muted)' }}>Pick a channel or DM to get started</div>
           </div>
         )}
 
+        {/* Server welcome */}
         {showMemberList && (
           <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', color: '#8e9297', gap: 12 }}>
-              <div style={{ fontSize: 64 }}>{activeServer!.name.charAt(0).toUpperCase()}</div>
-              <div style={{ fontSize: 24, fontWeight: 700, color: 'white' }}>Welcome to {activeServer!.name}!</div>
-              <div>Select a channel on the left to start chatting.</div>
-              <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
-                <button onClick={() => setModal('createChannel')} style={{ background: '#5865F2', color: 'white', padding: '10px 20px', borderRadius: 4, cursor: 'pointer', fontWeight: 600 }}>
+            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 14 }}>
+              <div style={{
+                width: 72, height: 72, borderRadius: 22,
+                background: `linear-gradient(135deg, ${stringToColor(activeServer!.name)} 0%, #0ea5e9 100%)`,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                color: 'white', fontSize: 36, fontWeight: 800,
+                boxShadow: '0 8px 24px rgba(14,165,233,0.3)',
+              }}>{activeServer!.name.charAt(0).toUpperCase()}</div>
+              <div style={{ fontSize: 24, fontWeight: 700, color: 'var(--text-primary)' }}>Welcome to {activeServer!.name}!</div>
+              <div style={{ fontSize: 14, color: 'var(--text-muted)' }}>Select a channel on the left to start chatting.</div>
+              <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
+                <button onClick={() => setModal('createChannel')} style={{ background: 'var(--accent)', color: 'white', padding: '9px 20px', borderRadius: 8, cursor: 'pointer', fontWeight: 600, fontSize: 14, boxShadow: '0 2px 8px var(--accent-glow)' }}>
                   + Create Channel
                 </button>
-                <button onClick={() => setModal('invite')} style={{ background: '#3ba55d', color: 'white', padding: '10px 20px', borderRadius: 4, cursor: 'pointer', fontWeight: 600 }}>
+                <button onClick={() => setModal('invite')} style={{ background: 'var(--bg-elevated)', color: 'var(--text-primary)', border: '1px solid var(--border)', padding: '9px 20px', borderRadius: 8, cursor: 'pointer', fontWeight: 600, fontSize: 14 }}>
                   👥 Invite People
                 </button>
               </div>
@@ -476,6 +495,7 @@ export default function App() {
           </div>
         )}
 
+        {/* Text chat */}
         {isText && (
           <Chat
             userId={user.id}
@@ -488,6 +508,7 @@ export default function App() {
           />
         )}
 
+        {/* Voice */}
         {isVoice && token && livekitUrl.startsWith('ws') && (
           <LiveKitRoom
             video={selectedVideo ? { deviceId: selectedVideo } : true}
@@ -496,20 +517,14 @@ export default function App() {
             token={token}
             serverUrl={livekitUrl}
             data-lk-theme="default"
-            style={{
-              flex: 1,
-              minHeight: 0,          // allow flex child to shrink
-              display: 'flex',
-              flexDirection: 'column',
-              overflow: 'hidden',    // prevent controls from escaping viewport
-            }}
+            style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
           >
             <CustomVideoConference />
             <RoomAudioRenderer volume={masterVolume / 100} />
           </LiveKitRoom>
         )}
         {isVoice && !token && (
-          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#8e9297' }}>
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)' }}>
             Connecting to voice…
           </div>
         )}
@@ -525,10 +540,7 @@ export default function App() {
           selectedOutputDevice={selectedOutput}
           masterVolume={masterVolume}
           onDeviceChange={(a, v, o, vol) => {
-            setSelectedAudio(a);
-            setSelectedVideo(v);
-            setSelectedOutput(o);
-            setMasterVolume(vol);
+            setSelectedAudio(a); setSelectedVideo(v); setSelectedOutput(o); setMasterVolume(vol);
             localStorage.setItem('hec_audio', a || '');
             localStorage.setItem('hec_video', v || '');
             localStorage.setItem('hec_output', o || '');
@@ -538,16 +550,13 @@ export default function App() {
       )}
       {modal === 'createServer' && (
         <CreateServerModal userId={user.id} onClose={() => setModal(null)} onCreated={(s) => {
-          setServers(prev => [...prev, s]);
-          setView('server');
-          setActiveServer(s);
+          setServers(prev => [...prev, s]); setView('server'); setActiveServer(s);
         }} />
       )}
       {modal === 'joinServer' && (
         <JoinServerModal userId={user.id} onClose={() => setModal(null)} onJoined={(s) => {
           setServers(prev => prev.some(x => x.id === s.id) ? prev : [...prev, s]);
-          setView('server');
-          setActiveServer(s);
+          setView('server'); setActiveServer(s);
         }} />
       )}
       {modal === 'createChannel' && activeServer && (
@@ -564,7 +573,6 @@ export default function App() {
           onClose={() => setModal(null)}
           onStarted={(ch, partnerUsername) => {
             setChannels(prev => prev.some(c => c.id === ch.id) ? prev : [...prev, ch]);
-            // Cache the partner's username right away so the DM name shows immediately
             const parts = ch.name.split('-');
             if (parts.length === 3) {
               const a = parseInt(parts[1], 10), b = parseInt(parts[2], 10);
@@ -580,30 +588,50 @@ export default function App() {
 }
 
 // ─── Helper components ──────────────────────────────────────────────────────
-function NavBtn({ emoji, title, onClick, active, color }: { emoji: string; title: string; onClick: () => void; active?: boolean; color?: string }) {
+function NavBtn({ emoji, title, onClick, active, accentOnHover }: {
+  emoji: string; title: string; onClick: () => void; active?: boolean; accentOnHover?: boolean;
+}) {
   return (
-    <div onClick={onClick} title={title} style={{
-      width: 48, height: 48, borderRadius: active ? '16px' : '50%',
-      backgroundColor: active ? '#5865F2' : '#36393f',
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      cursor: 'pointer', fontSize: 22, flexShrink: 0,
-      transition: 'border-radius 0.15s, background-color 0.15s',
-      boxShadow: active ? '0 0 0 3px #5865F2, 0 0 0 5px #202225' : '0 0 0 2px #202225',
-      color: color ?? 'white',
-    }}
-      onMouseEnter={e => { if (!active) { (e.currentTarget as HTMLElement).style.borderRadius = '16px'; if (color) (e.currentTarget as HTMLElement).style.backgroundColor = color; } }}
-      onMouseLeave={e => { if (!active) { (e.currentTarget as HTMLElement).style.borderRadius = '50%'; (e.currentTarget as HTMLElement).style.backgroundColor = '#36393f'; } }}
+    <div
+      onClick={onClick} title={title}
+      style={{
+        width: 44, height: 44, borderRadius: active ? 14 : '50%',
+        background: active ? 'linear-gradient(135deg, var(--accent) 0%, #38bdf8 100%)' : 'var(--bg-surface)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        cursor: 'pointer', fontSize: 20, flexShrink: 0,
+        transition: 'border-radius 0.2s, background 0.2s',
+        boxShadow: active ? '0 0 0 2px var(--accent), 0 4px 12px var(--accent-glow)' : 'none',
+        color: active ? 'white' : 'var(--text-secondary)',
+      }}
+      onMouseEnter={e => {
+        if (!active) {
+          (e.currentTarget as HTMLElement).style.borderRadius = '14px';
+          (e.currentTarget as HTMLElement).style.background = accentOnHover ? 'var(--accent)' : 'var(--bg-elevated)';
+          (e.currentTarget as HTMLElement).style.color = 'white';
+        }
+      }}
+      onMouseLeave={e => {
+        if (!active) {
+          (e.currentTarget as HTMLElement).style.borderRadius = '50%';
+          (e.currentTarget as HTMLElement).style.background = 'var(--bg-surface)';
+          (e.currentTarget as HTMLElement).style.color = 'var(--text-secondary)';
+        }
+      }}
     >{emoji}</div>
   );
 }
 
-function Divider() { return <div style={{ width: 32, height: 2, backgroundColor: '#36393f', borderRadius: 1 }} />; }
+function RailDivider() {
+  return <div style={{ width: 30, height: 1, backgroundColor: 'var(--border)', borderRadius: 1, margin: '2px 0' }} />;
+}
 
-function IconBtn({ title, onClick, children }: { title: string; onClick: () => void; children: React.ReactNode }) {
+function SidebarIconBtn({ title, onClick, children }: { title: string; onClick: () => void; children: React.ReactNode }) {
   return (
-    <button onClick={onClick} title={title} style={{ color: '#b9bbbe', cursor: 'pointer', fontSize: 18, padding: '2px 6px', borderRadius: 4, transition: 'color 0.15s' }}
-      onMouseEnter={e => (e.currentTarget.style.color = 'white')}
-      onMouseLeave={e => (e.currentTarget.style.color = '#b9bbbe')}
+    <button
+      onClick={onClick} title={title}
+      style={{ color: 'var(--text-muted)', cursor: 'pointer', fontSize: 18, padding: '3px 7px', borderRadius: 6, transition: 'color 0.15s, background 0.15s' }}
+      onMouseEnter={e => { e.currentTarget.style.color = 'var(--text-primary)'; e.currentTarget.style.backgroundColor = 'var(--bg-elevated)'; }}
+      onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.backgroundColor = 'transparent'; }}
     >{children}</button>
   );
 }
@@ -611,7 +639,9 @@ function IconBtn({ title, onClick, children }: { title: string; onClick: () => v
 function ChannelSection({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <div style={{ padding: '12px 16px 4px', fontSize: 11, fontWeight: 700, color: '#8e9297', textTransform: 'uppercase', letterSpacing: 1 }}>{label}</div>
+      <div style={{ padding: '14px 16px 4px', fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+        {label}
+      </div>
       {children}
     </div>
   );
@@ -621,72 +651,76 @@ function ChannelItem({ ch, active, onClick, isVoice, isDm, showOnline, isOnline 
   ch: Channel; active: boolean; onClick: () => void; isVoice?: boolean; isDm?: boolean; showOnline?: boolean; isOnline?: boolean;
 }) {
   return (
-    <div onClick={onClick} style={{
-      padding: '4px 16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8,
-      borderRadius: 4, margin: '1px 8px',
-      backgroundColor: active ? '#393c43' : 'transparent',
-      color: active ? 'white' : '#8e9297',
-      transition: 'background-color 0.1s',
-    }}
-      onMouseEnter={e => { if (!active) { (e.currentTarget as HTMLElement).style.backgroundColor = '#32353b'; (e.currentTarget as HTMLElement).style.color = '#dcddde'; } }}
-      onMouseLeave={e => { if (!active) { (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent'; (e.currentTarget as HTMLElement).style.color = '#8e9297'; } }}
+    <div
+      onClick={onClick}
+      style={{
+        padding: '5px 12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8,
+        borderRadius: 6, margin: '1px 8px',
+        backgroundColor: active ? 'var(--bg-elevated)' : 'transparent',
+        color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
+        transition: 'background 0.1s',
+        borderLeft: active ? '2px solid var(--accent)' : '2px solid transparent',
+      }}
+      onMouseEnter={e => { if (!active) { (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--bg-surface)'; (e.currentTarget as HTMLElement).style.color = 'var(--text-primary)'; } }}
+      onMouseLeave={e => { if (!active) { (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent'; (e.currentTarget as HTMLElement).style.color = 'var(--text-secondary)'; } }}
     >
       <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
-        <span style={{ fontSize: 16, flexShrink: 0 }}>{isDm ? '👤' : isVoice ? '🔊' : '#'}</span>
+        <span style={{ fontSize: 15, flexShrink: 0, color: active ? 'var(--accent)' : 'inherit' }}>
+          {isDm ? '👤' : isVoice ? '🔊' : '#'}
+        </span>
         {showOnline && isOnline && (
           <div style={{
-            position: 'absolute', bottom: -2, right: -4, width: 10, height: 10,
-            backgroundColor: '#3ba55d', border: '2px solid #2f3136', borderRadius: '50%',
+            position: 'absolute', bottom: -2, right: -4, width: 9, height: 9,
+            backgroundColor: 'var(--online)', border: '2px solid var(--bg-sidebar)', borderRadius: '50%',
           }} />
         )}
       </div>
-      <span style={{ fontSize: 15, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ch.name}</span>
+      <span style={{ fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: active ? 600 : 400 }}>
+        {ch.name}
+      </span>
     </div>
   );
 }
 
 function MemberList({ members, currentUserId, onlineUsers }: { members: User[]; currentUserId: number; onlineUsers: number[] }) {
-  // Colour palette for avatars
-  const avatarColor = (name: string) => {
-    const palette = ['#5865F2', '#3ba55d', '#faa61a', '#eb459e', '#ed4245', '#9b59b6'];
-    let h = 0;
-    for (let i = 0; i < name.length; i++) h = name.charCodeAt(i) + ((h << 5) - h);
-    return palette[Math.abs(h) % palette.length];
-  };
-
   return (
-    <div style={{ width: 240, backgroundColor: '#2f3136', padding: '16px 8px', overflowY: 'auto', flexShrink: 0 }}>
-      <div style={{ fontSize: 11, fontWeight: 700, color: '#8e9297', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8, paddingLeft: 8 }}>
+    <div style={{ width: 220, backgroundColor: 'var(--bg-sidebar)', padding: '16px 8px', overflowY: 'auto', flexShrink: 0, borderLeft: '1px solid var(--border)' }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 10, paddingLeft: 8 }}>
         Members — {members.length}
       </div>
       {members.map(m => (
-        <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', borderRadius: 4, marginBottom: 2, cursor: 'default' }}
-          onMouseEnter={e => (e.currentTarget as HTMLElement).style.backgroundColor = '#35373c'}
+        <div
+          key={m.id}
+          style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', borderRadius: 6, marginBottom: 2, cursor: 'default' }}
+          onMouseEnter={e => (e.currentTarget as HTMLElement).style.backgroundColor = 'var(--bg-surface)'}
           onMouseLeave={e => (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent'}
         >
           <div style={{ position: 'relative', flexShrink: 0 }}>
-            <div style={{ width: 32, height: 32, borderRadius: '50%', backgroundColor: avatarColor(m.username), display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 700, fontSize: 13 }}>
+            <div style={{
+              width: 32, height: 32, borderRadius: '50%',
+              background: `linear-gradient(135deg, ${stringToColor(m.username)} 0%, ${stringToColor(m.username + '1')} 100%)`,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              color: 'white', fontWeight: 700, fontSize: 13,
+            }}>
               {m.username.charAt(0).toUpperCase()}
             </div>
-            {/* Status dot */}
             <div style={{
-              position: 'absolute', bottom: -1, right: -1, width: 12, height: 12, borderRadius: '50%',
-              backgroundColor: onlineUsers.includes(m.id) ? '#3ba55d' : '#72767d', border: '2px solid #2f3136',
+              position: 'absolute', bottom: -1, right: -1, width: 11, height: 11, borderRadius: '50%',
+              backgroundColor: onlineUsers.includes(m.id) ? 'var(--online)' : 'var(--offline)',
+              border: '2px solid var(--bg-sidebar)',
             }} />
           </div>
           <div>
-            <div style={{ color: m.id === currentUserId ? '#5865F2' : '#dcddde', fontSize: 14, fontWeight: 500 }}>
+            <div style={{ color: m.id === currentUserId ? 'var(--accent)' : 'var(--text-primary)', fontSize: 14, fontWeight: 500 }}>
               {m.username}{m.id === currentUserId ? ' (you)' : ''}
             </div>
-            {onlineUsers.includes(m.id) ? (
-              <div style={{ color: '#3ba55d', fontSize: 11 }}>Online</div>
-            ) : (
-              <div style={{ color: '#72767d', fontSize: 11 }}>Offline</div>
-            )}
+            <div style={{ fontSize: 11, color: onlineUsers.includes(m.id) ? 'var(--online)' : 'var(--offline)' }}>
+              {onlineUsers.includes(m.id) ? 'Online' : 'Offline'}
+            </div>
           </div>
         </div>
       ))}
-      {members.length === 0 && <div style={{ color: '#72767d', fontSize: 14, paddingLeft: 8 }}>No members yet.</div>}
+      {members.length === 0 && <div style={{ color: 'var(--text-muted)', fontSize: 14, paddingLeft: 8 }}>No members yet.</div>}
     </div>
   );
 }
