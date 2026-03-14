@@ -1,16 +1,31 @@
 import React, { useState } from 'react';
 import { API_BASE } from './api';
 
-export default function Auth({ onAuthSuccess }: { onAuthSuccess: (user: any) => void }) {
+export default function Auth({
+    onAuthSuccess,
+    pendingInviteCode,
+}: {
+    onAuthSuccess: (user: any) => void;
+    pendingInviteCode?: string | null;
+}) {
     const [isLogin, setIsLogin] = useState(true);
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
+    const [cooldown, setCooldown] = useState(false);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setError('');
+
+        // Password length validation on register
+        if (!isLogin && password.length < 8) {
+            setError('Password must be at least 8 characters.');
+            return;
+        }
+
+        if (cooldown) return;
         setLoading(true);
 
         const endpoint = isLogin ? `${API_BASE}/api/login` : `${API_BASE}/api/register`;
@@ -24,6 +39,11 @@ export default function Auth({ onAuthSuccess }: { onAuthSuccess: (user: any) => 
 
             if (!res.ok) {
                 const data = await res.text();
+                // On failed login, start a 2s cooldown to slow brute-force
+                if (isLogin) {
+                    setCooldown(true);
+                    setTimeout(() => setCooldown(false), 2000);
+                }
                 throw new Error(data || 'Authentication failed');
             }
 
@@ -48,10 +68,7 @@ export default function Auth({ onAuthSuccess }: { onAuthSuccess: (user: any) => 
         }}>
             {/* Logo / wordmark */}
             <div style={{ marginBottom: 36, textAlign: 'center' }}>
-                <div style={{
-                    display: 'inline-flex', alignItems: 'center', gap: 10,
-                    marginBottom: 6,
-                }}>
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
                     <div style={{
                         width: 40, height: 40, borderRadius: 12,
                         background: 'linear-gradient(135deg, var(--accent) 0%, #38bdf8 100%)',
@@ -67,6 +84,23 @@ export default function Auth({ onAuthSuccess }: { onAuthSuccess: (user: any) => 
                     Fast voice & chat for your crew
                 </p>
             </div>
+
+            {/* Invite banner */}
+            {pendingInviteCode && (
+                <div style={{
+                    width: '100%', maxWidth: 420, marginBottom: 16,
+                    backgroundColor: 'rgba(14,165,233,0.12)',
+                    border: '1px solid rgba(14,165,233,0.3)',
+                    borderRadius: 10, padding: '12px 16px',
+                    display: 'flex', alignItems: 'center', gap: 10,
+                }}>
+                    <span style={{ fontSize: 20 }}>🔗</span>
+                    <div>
+                        <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--accent)' }}>You've been invited!</div>
+                        <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Sign in or create an account to join the space.</div>
+                    </div>
+                </div>
+            )}
 
             {/* Card */}
             <form onSubmit={handleSubmit} style={{
@@ -131,6 +165,7 @@ export default function Auth({ onAuthSuccess }: { onAuthSuccess: (user: any) => 
                         onChange={e => setPassword(e.target.value)}
                         required
                         placeholder="••••••••"
+                        minLength={isLogin ? undefined : 8}
                         style={{
                             width: '100%', padding: '11px 14px',
                             backgroundColor: 'var(--bg-input)',
@@ -143,27 +178,32 @@ export default function Auth({ onAuthSuccess }: { onAuthSuccess: (user: any) => 
                         onFocus={e => e.currentTarget.style.borderColor = 'var(--accent)'}
                         onBlur={e => e.currentTarget.style.borderColor = 'var(--border)'}
                     />
+                    {!isLogin && (
+                        <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6 }}>
+                            Minimum 8 characters
+                        </div>
+                    )}
                 </div>
 
                 <button
                     type="submit"
-                    disabled={loading}
+                    disabled={loading || cooldown}
                     style={{
                         width: '100%', padding: '12px',
-                        background: loading
+                        background: (loading || cooldown)
                             ? 'var(--bg-elevated)'
                             : 'linear-gradient(135deg, var(--accent) 0%, #38bdf8 100%)',
                         color: 'white', border: 'none', borderRadius: 8,
-                        fontWeight: 700, cursor: loading ? 'not-allowed' : 'pointer',
+                        fontWeight: 700, cursor: (loading || cooldown) ? 'not-allowed' : 'pointer',
                         fontSize: 15, letterSpacing: '0.02em',
-                        boxShadow: loading ? 'none' : '0 4px 16px var(--accent-glow)',
+                        boxShadow: (loading || cooldown) ? 'none' : '0 4px 16px var(--accent-glow)',
                         transition: 'opacity 0.15s, box-shadow 0.15s',
                         marginBottom: 18,
                     }}
-                    onMouseEnter={e => { if (!loading) e.currentTarget.style.opacity = '0.9'; }}
+                    onMouseEnter={e => { if (!loading && !cooldown) e.currentTarget.style.opacity = '0.9'; }}
                     onMouseLeave={e => { e.currentTarget.style.opacity = '1'; }}
                 >
-                    {loading ? 'Please wait…' : (isLogin ? 'Sign In' : 'Create Account')}
+                    {cooldown ? 'Please wait…' : loading ? 'Signing in…' : (isLogin ? 'Sign In' : 'Create Account')}
                 </button>
 
                 <div style={{ fontSize: 14, color: 'var(--text-muted)', textAlign: 'center' }}>

@@ -35,7 +35,7 @@ export default function Chat({ userId, username, channelId, channelName, ws, wsS
 
     useEffect(() => {
         setMessages([]);
-        fetch(`${API_BASE}/api/channels/${channelId}/messages`)
+        fetch(`${API_BASE}/api/channels/${channelId}/messages`, { credentials: 'include' })
             .then(r => r.json()).then(data => { if (Array.isArray(data)) setMessages(data); })
             .catch(() => { });
     }, [channelId]);

@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "frontend",
+  "productName": "blypp",
   "version": "0.1.0",
-  "identifier": "com.rares.frontend",
+  "identifier": "com.blypp.app",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -12,9 +12,11 @@
   "app": {
     "windows": [
       {
-        "title": "frontend",
-        "width": 800,
-        "height": 600
+        "title": "blypp",
+        "width": 1200,
+        "height": 780,
+        "minWidth": 800,
+        "minHeight": 600
       }
     ],
     "security": {

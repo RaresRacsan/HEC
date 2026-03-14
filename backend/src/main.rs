@@ -4,19 +4,20 @@ pub mod db;
 
 use axum::{
     routing::{get, post}, Router, Json, extract::{State, Path},
-    http::StatusCode
+    http::{StatusCode, header}, response::{IntoResponse, Response}
 };
+use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use dotenvy::dotenv;
 use std::env;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use livekit_auth::{AppState as LiveKitState, generate_token};
 use ws_chat::{ws_handler, WsState};
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{CorsLayer, AllowOrigin};
 use sqlx::postgres::PgPoolOptions;
 use tokio::sync::broadcast;
 use axum::extract::FromRef;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -42,46 +43,93 @@ pub struct AuthRequest {
     pub password: Option<String>,
 }
 
-#[derive(serde::Serialize)]
+#[derive(Serialize)]
 pub struct AuthResponse {
     pub user: db::User,
-    pub token: String, // In a real app, send a JWT
+}
+
+// Helper to create a secure session cookie
+fn create_session_cookie(user_id: i32) -> Cookie<'static> {
+    Cookie::build(("blypp_session", user_id.to_string()))
+        .path("/")
+        .http_only(true)
+        .secure(true) // Should be true in prod, but browsers allow localhost
+        .same_site(SameSite::Lax) // Lax is usually better for app navigation
+        .permanent()
+        .build()
 }
 
 pub async fn register_handler(
     State(state): State<Arc<WsState>>,
+    jar: CookieJar,
     Json(payload): Json<AuthRequest>,
-) -> Result<Json<AuthResponse>, (StatusCode, String)> {
+) -> Result<(CookieJar, Json<AuthResponse>), (StatusCode, String)> {
     let raw_pass = payload.password.unwrap_or_else(|| "password123".into());
     let hash = bcrypt::hash(raw_pass, bcrypt::DEFAULT_COST).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     
     let user = db::create_user(&state.db, &payload.username, &hash)
         .await
-        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+        .map_err(|e| {
+            if e.to_string().contains("unique constraint") {
+                (StatusCode::BAD_REQUEST, "Username already exists".to_string())
+            } else {
+                (StatusCode::BAD_REQUEST, e.to_string())
+            }
+        })?;
     
-    Ok(Json(AuthResponse { user, token: "mock_jwt_token".into() }))
+    let jar = jar.add(create_session_cookie(user.id));
+    Ok((jar, Json(AuthResponse { user })))
 }
 
 pub async fn login_handler(
     State(state): State<Arc<WsState>>,
+    jar: CookieJar,
     Json(payload): Json<AuthRequest>,
-) -> Result<Json<AuthResponse>, (StatusCode, String)> {
+) -> Result<(CookieJar, Json<AuthResponse>), (StatusCode, String)> {
     let user = db::get_user_by_username(&state.db, &payload.username)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .ok_or((StatusCode::UNAUTHORIZED, "User not found".to_string()))?;
+        .ok_or((StatusCode::UNAUTHORIZED, "Invalid username or password".to_string()))?;
     
     let raw_pass = payload.password.unwrap_or_else(|| "".into());
     let is_valid = match &user.password_hash {
         Some(hash) if !hash.is_empty() => bcrypt::verify(raw_pass, hash).unwrap_or(false),
-        _ => true, // Fallback for old mock users (NULL or empty string hashes)
+        _ => false,
     };
 
     if !is_valid {
-        return Err((StatusCode::UNAUTHORIZED, "Invalid password".to_string()));
+        return Err((StatusCode::UNAUTHORIZED, "Invalid username or password".to_string()));
     }
     
-    Ok(Json(AuthResponse { user, token: "mock_jwt_token".into() }))
+    let jar = jar.add(create_session_cookie(user.id));
+    Ok((jar, Json(AuthResponse { user })))
+}
+
+pub async fn logout_handler(jar: CookieJar) -> (CookieJar, StatusCode) {
+    let mut cookie = Cookie::from("blypp_session");
+    cookie.set_path("/");
+    (jar.remove(cookie), StatusCode::OK)
+}
+
+pub async fn get_me_handler(
+    State(state): State<Arc<WsState>>,
+    jar: CookieJar,
+) -> Result<Json<db::UserPublic>, (StatusCode, String)> {
+    let user_id = jar.get("blypp_session")
+        .and_then(|c| c.value().parse::<i32>().ok())
+        .ok_or((StatusCode::UNAUTHORIZED, "Not logged in".to_string()))?;
+
+    let user = sqlx::query_as!(
+        db::UserPublic,
+        "SELECT id, username, created_at FROM users WHERE id = $1",
+        user_id
+    )
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .ok_or((StatusCode::UNAUTHORIZED, "Session user not found".to_string()))?;
+
+    Ok(Json(user))
 }
 
 pub async fn get_servers_handler(
@@ -125,7 +173,6 @@ pub async fn get_dms_handler(
     Path(user_id): Path<i32>,
     State(state): State<Arc<WsState>>,
 ) -> Result<Json<Vec<db::Channel>>, String> {
-    // DM channel names follow the pattern "dm-{a}-{b}" where the user is either a or b
     let channels = sqlx::query_as!(
         db::Channel,
         r#"
@@ -144,7 +191,7 @@ pub async fn get_dms_handler(
     Ok(Json(channels))
 }
 
-#[derive(serde::Serialize)]
+#[derive(Serialize)]
 pub struct ServerMemberResponse {
     pub id: i32,
     pub username: String,
@@ -182,7 +229,6 @@ pub async fn create_server_handler(
     State(state): State<Arc<WsState>>,
     Json(payload): Json<CreateServerRequest>,
 ) -> Result<Json<db::Server>, (StatusCode, String)> {
-    // Create the server
     let server = sqlx::query_as!(
         db::Server,
         "INSERT INTO servers (name) VALUES ($1) RETURNING id, name, created_at as \"created_at!\"",
@@ -192,7 +238,6 @@ pub async fn create_server_handler(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    // Add creator as owner
     sqlx::query!(
         "INSERT INTO server_members (server_id, user_id, role) VALUES ($1, $2, 'owner')",
         server.id, payload.user_id
@@ -201,7 +246,6 @@ pub async fn create_server_handler(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    // Generate a unique, permanent invite code for this server based on its ID
     let code = format!("{:08X}", (server.id as u64 * 0x9E3779B97F4A7C15u64) & 0xFFFF_FFFF);
     sqlx::query!(
         "INSERT INTO invite_codes (code, server_id, created_by) VALUES ($1, $2, $3) ON CONFLICT (code) DO NOTHING",
@@ -217,7 +261,7 @@ pub async fn create_server_handler(
 #[derive(Deserialize)]
 pub struct CreateChannelRequest {
     pub name: String,
-    pub channel_type: String, // "text" or "voice"
+    pub channel_type: String,
 }
 
 pub async fn create_channel_handler(
@@ -256,14 +300,12 @@ pub async fn get_server_invite_handler(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    // If no invite exists yet (legacy server), generate one now
     let code = if let Some(row) = existing {
         row.code
     } else {
         use std::time::{SystemTime, UNIX_EPOCH};
         let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
         let new_code = format!("{:08X}", (ts ^ (server_id as u128 * 0xDEAD_BEEF)) & 0xFFFF_FFFF);
-        // Find a valid creator (any member of the server)
         let creator = sqlx::query!(
             "SELECT user_id FROM server_members WHERE server_id = $1 LIMIT 1",
             server_id
@@ -282,12 +324,12 @@ pub async fn get_server_invite_handler(
     };
 
     Ok(Json(InviteResponse {
-        invite_url: format!("http://localhost:1420/invite/{}", code),
+        invite_url: format!("https://blypp.tech/invite/{}", code),
         code,
     }))
 }
 
-#[derive(serde::Serialize)]
+#[derive(Serialize)]
 pub struct InviteResponse {
     pub code: String,
     pub invite_url: String,
@@ -298,7 +340,6 @@ pub async fn create_invite_handler(
     State(state): State<Arc<WsState>>,
     Json(payload): Json<CreateInviteRequest>,
 ) -> Result<Json<InviteResponse>, (StatusCode, String)> {
-    // Generate a random 8-char alphanumeric code
     use std::time::{SystemTime, UNIX_EPOCH};
     let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
     let code = format!("{:08X}", (ts ^ (server_id as u128 * 0xDEAD_BEEF)) & 0xFFFF_FFFF);
@@ -312,7 +353,7 @@ pub async fn create_invite_handler(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     Ok(Json(InviteResponse {
-        invite_url: format!("http://localhost:1420/invite/{}", code),
+        invite_url: format!("https://blypp.tech/invite/{}", code),
         code,
     }))
 }
@@ -320,9 +361,8 @@ pub async fn create_invite_handler(
 pub async fn join_invite_handler(
     Path(code): Path<String>,
     State(state): State<Arc<WsState>>,
-    Json(payload): Json<CreateServerRequest>, // reuse: name ignored, user_id used
+    Json(payload): Json<CreateServerRequest>,
 ) -> Result<Json<db::Server>, (StatusCode, String)> {
-    // Look up invite
     let invite = sqlx::query!(
         "SELECT id, server_id, uses, max_uses, expires_at FROM invite_codes WHERE code = $1",
         code
@@ -332,21 +372,18 @@ pub async fn join_invite_handler(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
     .ok_or((StatusCode::NOT_FOUND, "Invite not found".to_string()))?;
 
-    // Check expiry
     if let Some(exp) = invite.expires_at {
         if exp < chrono::Utc::now() {
             return Err((StatusCode::GONE, "Invite has expired".to_string()));
         }
     }
 
-    // Check max uses
     let uses = invite.uses.unwrap_or(0);
     let max_uses = invite.max_uses.unwrap_or(0);
     if max_uses > 0 && uses >= max_uses {
         return Err((StatusCode::GONE, "Invite max uses reached".to_string()));
     }
 
-    // Add to server (ignore if already member)
     sqlx::query!(
         "INSERT INTO server_members (server_id, user_id, role) VALUES ($1, $2, 'member') ON CONFLICT DO NOTHING",
         invite.server_id, payload.user_id
@@ -355,13 +392,11 @@ pub async fn join_invite_handler(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    // Increment uses
     sqlx::query!("UPDATE invite_codes SET uses = uses + 1 WHERE id = $1", invite.id)
         .execute(&state.db)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    // Return the server
     let server = sqlx::query_as!(
         db::Server,
         "SELECT id, name, created_at as \"created_at!\" FROM servers WHERE id = $1",
@@ -384,13 +419,11 @@ pub async fn start_dm_handler(
     State(state): State<Arc<WsState>>,
     Json(payload): Json<StartDmRequest>,
 ) -> Result<Json<db::Channel>, (StatusCode, String)> {
-    // Find the target user
     let target = db::get_user_by_username(&state.db, &payload.to_username)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .ok_or((StatusCode::NOT_FOUND, "User not found".to_string()))?;
 
-    // DM channel name is deterministic: sorted user IDs joined by '-'
     let (a, b) = if payload.from_user_id < target.id {
         (payload.from_user_id, target.id)
     } else {
@@ -398,7 +431,6 @@ pub async fn start_dm_handler(
     };
     let dm_name = format!("dm-{}-{}", a, b);
 
-    // Get or create DM channel (SELECT first, then INSERT if not found)
     let channel = if let Some(existing) = sqlx::query_as!(
         db::Channel,
         "SELECT id, name, is_dm, server_id, channel_type, created_at as \"created_at!\" FROM channels WHERE name = $1 AND is_dm = true",
@@ -432,10 +464,8 @@ pub async fn get_voice_participants_handler(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    // The livekit API url must be HTTP, but our env var is WS.
     let http_url = livekit.livekit_url.replace("ws://", "http://").replace("wss://", "https://");
 
-    // RoomClient needs an async init or sync init depending on version, but usually it's `with_api_key`
     let room_service = livekit_api::services::room::RoomClient::with_api_key(
         &http_url,
         &livekit.livekit_api_key,
@@ -445,7 +475,6 @@ pub async fn get_voice_participants_handler(
     let mut result = std::collections::HashMap::new();
 
     for ch in channels {
-        // It's ok if this fails because the room might not exist if it's empty
         if let Ok(participants) = room_service.list_participants(&ch.name).await {
             let names: Vec<String> = participants.into_iter().map(|p| p.identity).collect();
             if !names.is_empty() {
@@ -548,14 +577,12 @@ pub async fn get_messages_handler(
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv().ok();
     
-    // Setup Database
     let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let pool = PgPoolOptions::new()
         .max_connections(5)
         .connect(&database_url)
         .await?;
 
-    // Setup Broadcast channel for WebSocket text chat
     let (tx, _rx) = broadcast::channel(100);
 
     let state = AppState {
@@ -571,12 +598,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }),
     };
 
-    let cors = CorsLayer::permissive();
+    // Configure CORS to allow credentials and specific origin in production
+    let cors = CorsLayer::new()
+        .allow_origin(AllowOrigin::predicate(|origin, _| {
+            let o = origin.to_str().unwrap_or("");
+            o == "http://localhost:1420" || o == "https://blypp.tech" || o.starts_with("tauri://")
+        }))
+        .allow_headers([header::CONTENT_TYPE])
+        .allow_methods([axum::http::Method::GET, axum::http::Method::POST, axum::http::Method::DELETE])
+        .allow_credentials(true);
 
     let app = Router::new()
         .route("/api/livekit/token", post(generate_token))
         .route("/api/register", post(register_handler))
         .route("/api/login", post(login_handler))
+        .route("/api/logout", post(logout_handler))
+        .route("/api/me", get(get_me_handler))
         // Servers
         .route("/api/servers", post(create_server_handler))
         .route("/api/users/{user_id}/servers", get(get_servers_handler))
@@ -603,7 +640,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let port: u16 = env::var("PORT").unwrap_or_else(|_| "3000".into()).parse().unwrap();
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     
-    println!("Server running on http://0.0.0.0:{} (accessible on your LAN)", port);
+    println!("Server running on http://0.0.0.0:{}", port);
 
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();

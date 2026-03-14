@@ -99,6 +99,7 @@ export function CreateServerModal({ userId, onClose, onCreated }: {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ name, user_id: userId }),
+                credentials: 'include',
             });
             if (!res.ok) throw new Error(await res.text());
             onCreated(await res.json());
@@ -139,6 +140,7 @@ export function CreateChannelModal({ serverId, onClose, onCreated }: {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ name, channel_type: type }),
+                credentials: 'include',
             });
             if (!res.ok) throw new Error(await res.text());
             onCreated(await res.json());
@@ -188,7 +190,7 @@ export function InviteModal({ serverId, serverName, onClose }: {
     const [err, setErr] = useState('');
 
     React.useEffect(() => {
-        fetch(`${API}/api/servers/${serverId}/invite`)
+        fetch(`${API}/api/servers/${serverId}/invite`, { credentials: 'include' })
             .then(r => r.ok ? r.json() : Promise.reject('Failed to load invite'))
             .then(data => setInvite(data))
             .catch(e => setErr(String(e)));
@@ -271,6 +273,7 @@ export function JoinServerModal({ userId, onClose, onJoined }: {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ user_id: userId, name: '' }),
+                credentials: 'include',
             });
             if (!res.ok) throw new Error(await res.text());
             onJoined(await res.json());
@@ -309,6 +312,7 @@ export function StartDmModal({ userId, onClose, onStarted }: {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ from_user_id: userId, to_username: username }),
+                credentials: 'include',
             });
             if (!res.ok) throw new Error(await res.text());
             onStarted(await res.json(), username);
